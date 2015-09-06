@@ -171,8 +171,9 @@ pcl::gpu::KinfuTracker::rows ()
 void
 pcl::gpu::KinfuTracker::reset()
 {
-  if (global_time_)
-    cout << "Reset" << endl;
+  if (global_time_){
+    cout << "zhangxaochen: Reset" << endl;
+  }
 
   global_time_ = 0;
   rmats_.clear ();

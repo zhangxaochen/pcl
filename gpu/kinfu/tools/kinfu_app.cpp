@@ -391,6 +391,7 @@ struct ImageView
         viewerScene_->showRGBImage (reinterpret_cast<unsigned char*> (&view_host_[0]), view_device_.cols (), view_device_.rows ());    
 
     //viewerColor_.showRGBImage ((unsigned char*)&rgb24.data, rgb24.cols, rgb24.rows);
+    //cout<<"rgb24.cols: "<<rgb24.cols<<", "<<rgb24.rows<<endl;
 
 #ifdef HAVE_OPENCV
     if (accumulate_views_)
@@ -998,6 +999,10 @@ struct KinFuApp
         if (triggered_capture)
             capture_.start(); // Triggers new frame
         bool has_data = data_ready_cond_.timed_wait (lock, boost::posix_time::millisec(100));        
+        static int fid = 0;
+        cout<<"has_data: "<<has_data<<"; "
+            <<fid<<endl;
+        fid++;
                        
         try { this->execute (depth_, rgb24_, has_data); }
         catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
@@ -1267,6 +1272,8 @@ main (int argc, char* argv[])
       // Sort the read files by name
       sort (pcd_files.begin (), pcd_files.end ());
       capture.reset (new pcl::PCDGrabber<pcl::PointXYZRGBA> (pcd_files, fps_pcd, false));
+      //zhangxaochen:
+      //capture.reset (new pcl::PCDGrabber<pcl::PointXYZI> (pcd_files, fps_pcd, false));
       triggered_capture = true;
       pcd_input = true;
     }

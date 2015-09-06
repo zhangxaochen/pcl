@@ -36,6 +36,7 @@
 % and call plot_camera_poses('<path-to-camera.csv-file>')
 
 function plot_camera_poses(filename)
+close all;
 poses=load(filename);
 %% show data on a 2D graph
 h=figure();
@@ -49,14 +50,20 @@ for n=1:size(poses,1)
   q=poses(n,4:7);
   r=q2rot(q);
   coord(h,r,t);
+  pause;
 end
 octave_axis_equal(h);
+% axis equal; 
 
 %% prevent Octave from quitting if called from the command line
 input('Press enter to continue'); 
 end
 
 function coord(h,r,t)
+% disp('t, r:')
+% disp(t)
+% disp(r)
+
 figure(h);
 hold on;
 c={'r','g','b'};
