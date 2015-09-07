@@ -198,6 +198,53 @@ vector<string> getPcdFilesInDir(const string& directory)
   return result;  
 }
 
+namespace zc{
+//#define _ZC_DBG_LOG 01
+#ifdef _ZC_DBG_LOG
+#define dbgPrint(format, ...) printf(format, ## __VA_ARGS__)
+#define dbgPrintln(format, ...) printf(format"\n", ## __VA_ARGS__)
+#else
+#define dbgPrint
+#define dbgPrintln
+#endif
+
+    //@author zhangxaochen
+    //@brief get file names in *dir* with extension *ext*
+    //@param dir file directory
+    //@param ext file extension
+    vector<string> getFnamesInDir(const string &dir, const string &ext){
+        namespace fs = boost::filesystem;
+        //fake dir:
+        //cout << fs::is_directory("a/b/c") <<endl; //false
+
+        //fs::path dirPath(dir); //no need
+        cout << "path: " << dir << endl
+            << "ext: " << ext <<endl;
+
+        if(dir.empty() || !fs::exists(dir) || !fs::is_directory(dir)) //其实 is_directory 包含了 exists: http://stackoverflow.com/questions/2203919/boostfilesystem-exists-on-directory-path-fails-but-is-directory-is-ok
+            PCL_THROW_EXCEPTION (pcl::IOException, "ZC: No valid directory given!\n");
+
+        vector<string> res;
+        fs::directory_iterator pos(dir),
+            end;
+
+        for(; pos != end; ++pos){
+            if(fs::is_regular_file(pos->status()) || fs::extension(*pos) == ext){
+#if BOOST_FILESYSTEM_VERSION == 3
+                res.push_back(pos->path().string());
+#else
+                res.push_back(pos->path());
+#endif
+            }
+        }
+
+        if(res.empty())
+            PCL_THROW_EXCEPTION(pcl::IOException, "ZC: no *" + ext + " files in current directory!\n");
+        return res;
+    }//getFnamesInDir
+
+}//namespace zc
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct SampledScopeTime : public StopWatch
@@ -834,12 +881,26 @@ struct KinFuApp
   }
   
   void source_cb1_device(const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper)  
-  {        
+  {
+    //zhangxaochen:
+    dbgPrint("--source_cb1_device\n\t--fid, time, baseline?: %u, %lu, %f\n", depth_wrapper->getFrameID(), depth_wrapper->getTimeStamp(), depth_wrapper->getBaseline());
+//     cout << "--source_cb1_device" << endl
+//          << "fid, time, baseline?: " << depth_wrapper->getFrameID() << ", " << depth_wrapper->getTimeStamp() << ", " << depth_wrapper->getBaseline() << endl;
+    cout << "\t--" << boost::this_thread::get_id() << endl;
     {
-      boost::mutex::scoped_try_lock lock(data_ready_mutex_);
-      if (exit_ || !lock)
+      //boost::mutex::scoped_try_lock lock(data_ready_mutex_);
+      //改用 阻塞锁, 不要 try-lock: 
+      //2015-9-7 18:13:59   读真实硬件可以做到不跳帧, 读 -pcd 导致阻塞, 暂时放弃. -pcd 解决跳帧本质上由 -pcd_fps < 0 控制
+      boost::mutex::scoped_lock lock(data_ready_mutex_);
+
+      if (exit_ || !lock){
+          dbgPrint("\tif (exit_ || !lock)\n");
+          //cout << "\tif (exit_ || !lock)" << endl;
           return;
-      
+      }
+      dbgPrint("\t--lock~~\n");
+      //cout << "\tlock~~" <<endl;
+
       depth_.cols = depth_wrapper->getWidth();
       depth_.rows = depth_wrapper->getHeight();
       depth_.step = depth_.cols * depth_.elemSize();
@@ -848,11 +909,17 @@ struct KinFuApp
       depth_wrapper->fillDepthImageRaw(depth_.cols, depth_.rows, &source_depth_data_[0]);
       depth_.data = &source_depth_data_[0];     
     }
+    dbgPrint("\t--notify_one~\n");
+    //cout << "notify_one~" << endl;
     data_ready_cond_.notify_one();
+    
   }
 
   void source_cb2_device(const boost::shared_ptr<openni_wrapper::Image>& image_wrapper, const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper, float)
   {
+      //zhangxaochen:
+      dbgPrint("--source_cb2_device\n");
+      //cout << "--source_cb2_device" << endl;
     {
       boost::mutex::scoped_try_lock lock(data_ready_mutex_);
       if (exit_ || !lock)
@@ -925,6 +992,9 @@ struct KinFuApp
   void
   source_cb3 (const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr & DC3)
   {
+      //zhangxaochen:
+      dbgPrint("--source_cb3\n");
+      //cout << "--source_cb3" << endl;
     {
       boost::mutex::scoped_try_lock lock(data_ready_mutex_);
       if (exit_ || !lock)
@@ -996,13 +1066,31 @@ struct KinFuApp
           
       while (!exit_ && scene_view_not_stopped && image_view_not_stopped)
       { 
-        if (triggered_capture)
+        dbgPrintln("mainloop-while, locking~");
+        cout << boost::this_thread::get_id() << endl;
+
+        //cout << "mainloop-while, locking~" <<endl;
+        //zc: trigger 速度可能较慢, 
+        if (triggered_capture){
             capture_.start(); // Triggers new frame
+            //cout << "capture_.start" << endl;
+            dbgPrint("capture_.start\n");
+        }
+        dbgPrint("timed_wait~\n");
+#if 0 //改用阻塞式 wait, 不是跳帧, 是为了与 source_cb1_device 双射输出
+        data_ready_cond_.wait(lock);
+        bool has_data = true; //really?
+#elif 01 //改用 timed_wait, 但长时间 ( >10s)
+        bool has_data = data_ready_cond_.timed_wait (lock, boost::posix_time::millisec(3000));        
+#else
         bool has_data = data_ready_cond_.timed_wait (lock, boost::posix_time::millisec(100));        
+#endif //wait & timed_wait
         static int fid = 0;
-        cout<<"has_data: "<<has_data<<"; "
-            <<fid<<endl;
+        dbgPrint("has_data: %d; %d\n", has_data, fid);
+        //cout<<"has_data: "<<has_data<<"; "
+        //    <<fid<<endl;
         fid++;
+
                        
         try { this->execute (depth_, rgb24_, has_data); }
         catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
@@ -1119,6 +1207,11 @@ struct KinFuApp
 
   boost::shared_ptr<CameraPoseProcessor> pose_processor_;
 
+  //zhangxaochen:
+  bool png_source_;
+  vector<string> pngFnames;
+  bool isReadOn;
+
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   static void
   keyboard_callback (const visualization::KeyboardEvent &e, void *cookie)
@@ -1156,11 +1249,17 @@ struct KinFuApp
         cout << "done [" << app->tsdf_cloud_ptr_->size () << " points]" << endl;
         break;
 
+        //zhangxaochen:
+      case (int)' ':
+          cout << "ZC: read a frame" << endl;
+          app->isReadOn = true;
+          break;
+
       default:
         break;
       }    
-  }
-};
+  }//keyboard_callback
+};//struct KinFuApp
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 template<typename CloudPtr> void
@@ -1250,6 +1349,10 @@ main (int argc, char* argv[])
   bool pcd_input = false;
   
   std::string eval_folder, match_file, openni_device, oni_file, pcd_dir;
+  //zhangxaochen:
+  std::string png_dir;
+  vector<string> pngFnames;
+
   try
   {    
     if (pc::parse_argument (argc, argv, "-dev", openni_device) > 0)
@@ -1276,6 +1379,12 @@ main (int argc, char* argv[])
       //capture.reset (new pcl::PCDGrabber<pcl::PointXYZI> (pcd_files, fps_pcd, false));
       triggered_capture = true;
       pcd_input = true;
+    }
+    //zhangxaochen:
+    else if (pc::parse_argument (argc, argv, "-png-dir", png_dir) > 0)
+    {
+        pngFnames = zc::getFnamesInDir(png_dir, ".png");
+        std::sort(pngFnames.begin(), pngFnames.end());
     }
     else if (pc::parse_argument (argc, argv, "-eval", eval_folder) > 0)
     {
@@ -1311,6 +1420,8 @@ main (int argc, char* argv[])
   }
 
   KinFuApp app (*capture, volume_size, icp, visualization, pose_processor);
+  //zhangxaochen:
+  app.pngFnames = pngFnames;
 
   if (pc::parse_argument (argc, argv, "-eval", eval_folder) > 0)
     app.toggleEvaluationMode(eval_folder, match_file);
@@ -1353,7 +1464,14 @@ main (int argc, char* argv[])
   }
 
   // executing
-  try { app.startMainLoop (triggered_capture); }
+  try { 
+      //zhangxaochen:
+#if 01
+      app.startMainLoop (triggered_capture); 
+#elif 01    //use png-dir
+      //legacy
+#endif
+  }
   catch (const pcl::PCLException& /*e*/) { cout << "PCLException" << endl; }
   catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; }
   catch (const std::exception& /*e*/) { cout << "Exception" << endl; }
