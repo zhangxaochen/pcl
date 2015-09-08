@@ -76,6 +76,8 @@
 #ifdef HAVE_OPENCV  
   #include <opencv2/highgui/highgui.hpp>
   #include <opencv2/imgproc/imgproc.hpp>
+//zhangxaochen:
+using namespace cv;
 //#include "video_recorder.h"
 #endif
 typedef pcl::ScopeTime ScopeTimeT;
@@ -229,7 +231,7 @@ namespace zc{
             end;
 
         for(; pos != end; ++pos){
-            if(fs::is_regular_file(pos->status()) || fs::extension(*pos) == ext){
+            if(fs::is_regular_file(pos->status()) && fs::extension(*pos) == ext){
 #if BOOST_FILESYSTEM_VERSION == 3
                 res.push_back(pos->path().string());
 #else
@@ -1036,6 +1038,8 @@ struct KinFuApp
     typedef boost::shared_ptr<DepthImage> DepthImagePtr;
     typedef boost::shared_ptr<Image> ImagePtr;
         
+    //zhangxaochen:
+#if 0 //mutex-lock 获取 & 处理数据异步
     boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1_dev = boost::bind (&KinFuApp::source_cb2_device, this, _1, _2, _3);
     boost::function<void (const DepthImagePtr&)> func2_dev = boost::bind (&KinFuApp::source_cb1_device, this, _1);
 
@@ -1104,7 +1108,44 @@ struct KinFuApp
           capture_.stop (); // Stop stream
     }
     c.disconnect();
-  }
+#elif 1 //用 for-loop, 同步获取 & 处理数据
+#ifdef HAVE_OPENCV
+    dbgPrintln("---------------HAVE_OPENCV");
+    size_t pngVecSz = pngFnames.size();
+//     vtkSmartPointer<vtkPNGReader> reader = vtkSmartPointer<vtkPNGReader>::New();
+    for(size_t i = 0; i < pngVecSz; i++){
+        string &fn = pngFnames[i];
+        printf("%s\n", fn.c_str());
+        Mat dmat = imread(fn, IMREAD_UNCHANGED);
+        Mat dmat8u;
+        dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+        imshow("dmat8u", dmat8u);
+        waitKey(this->png_fps > 0 ? int(1e3 / png_fps) : 0);
+
+        depth_.cols = dmat.cols;
+        depth_.rows = dmat.rows;
+        depth_.step = depth_.cols * depth_.elemSize();
+        depth_.data = (ushort*)dmat.data;
+
+//         depth_.cols = depth_wrapper->getWidth();
+//         depth_.rows = depth_wrapper->getHeight();
+//         depth_.step = depth_.cols * depth_.elemSize();
+
+//         reader->SetFileName(fn.c_str());
+// 
+//         vtkImageData *img = reader->GetOutput();
+//         img->GetArrayPointer()
+
+        bool has_data = true; //fake flag;
+        try { this->execute (depth_, rgb24_, has_data); }
+        catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
+        catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
+
+    }
+#endif //HAVE_OPENCV
+#endif //sync VS. async
+
+  }//startMainLoop
 
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void
@@ -1211,6 +1252,7 @@ struct KinFuApp
   bool png_source_;
   vector<string> pngFnames;
   bool isReadOn;
+  int png_fps;
 
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   static void
@@ -1352,6 +1394,7 @@ main (int argc, char* argv[])
   //zhangxaochen:
   std::string png_dir;
   vector<string> pngFnames;
+  int png_fps = 15;
 
   try
   {    
@@ -1385,6 +1428,8 @@ main (int argc, char* argv[])
     {
         pngFnames = zc::getFnamesInDir(png_dir, ".png");
         std::sort(pngFnames.begin(), pngFnames.end());
+
+        pc::parse_argument(argc, argv, "-png-fps", png_fps);
     }
     else if (pc::parse_argument (argc, argv, "-eval", eval_folder) > 0)
     {
@@ -1422,6 +1467,7 @@ main (int argc, char* argv[])
   KinFuApp app (*capture, volume_size, icp, visualization, pose_processor);
   //zhangxaochen:
   app.pngFnames = pngFnames;
+  app.png_fps = png_fps;
 
   if (pc::parse_argument (argc, argv, "-eval", eval_folder) > 0)
     app.toggleEvaluationMode(eval_folder, match_file);
