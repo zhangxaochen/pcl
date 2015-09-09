@@ -1112,7 +1112,6 @@ struct KinFuApp
 #ifdef HAVE_OPENCV
     dbgPrintln("---------------HAVE_OPENCV");
     size_t pngVecSz = pngFnames.size();
-//     vtkSmartPointer<vtkPNGReader> reader = vtkSmartPointer<vtkPNGReader>::New();
     for(size_t i = 0; i < pngVecSz; i++){
         string &fn = pngFnames[i];
         printf("%s\n", fn.c_str());
@@ -1126,15 +1125,6 @@ struct KinFuApp
         depth_.rows = dmat.rows;
         depth_.step = depth_.cols * depth_.elemSize();
         depth_.data = (ushort*)dmat.data;
-
-//         depth_.cols = depth_wrapper->getWidth();
-//         depth_.rows = depth_wrapper->getHeight();
-//         depth_.step = depth_.cols * depth_.elemSize();
-
-//         reader->SetFileName(fn.c_str());
-// 
-//         vtkImageData *img = reader->GetOutput();
-//         img->GetArrayPointer()
 
         bool has_data = true; //fake flag;
         try { this->execute (depth_, rgb24_, has_data); }
