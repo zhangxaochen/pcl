@@ -47,6 +47,7 @@
 #include <Eigen/Cholesky>
 #include <Eigen/Geometry>
 #include <Eigen/LU>
+#include <Eigen/Eigenvalues>
 
 #ifdef HAVE_OPENCV
   #include <opencv2/opencv.hpp>
@@ -340,6 +341,12 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
     #endif
             //checking nullspace
             double det = A.determinant ();
+
+			//sunguofei
+			Eigen::Matrix<double,6,6,Eigen::RowMajor>::EigenvaluesReturnType eigenvalues = A.eigenvalues();
+			double cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
+			cond=sqrt(cond);
+			cout<<"condition of A: "<<cond<<endl;
 
             if (fabs (det) < 1e-15 || pcl_isnan (det))
             {
