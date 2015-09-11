@@ -296,6 +296,10 @@ namespace pcl
         void
         reset ();
 
+        //sunguofei
+        Eigen::Matrix3f d_R;
+        Eigen::Vector3f d_t;
+
 public:
 EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

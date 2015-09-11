@@ -264,6 +264,16 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         Matrix3frm init_Rcam = rmats_[0]; //  [Ri|ti] - pos of camera, i.e.
         Vector3f   init_tcam = tvecs_[0]; //  transform from camera to global coo space for (i-1)th camera pose
 
+        //sunguofei
+        if (hint)
+        {
+            Matrix3frm init_Rcam_1 = hint->rotation().matrix();
+            Vector3f init_tcam_1 = hint->translation().matrix();
+            //根据第一帧时两个不同的初始R和t计算两个坐标系之间变换的dR和dt
+            d_R = init_Rcam*init_Rcam_1.inverse();
+            d_t = -d_R*init_tcam_1+init_tcam;
+        }
+
         Mat33&  device_Rcam = device_cast<Mat33> (init_Rcam);
         float3& device_tcam = device_cast<float3>(init_tcam);
 
@@ -290,18 +300,31 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       //Mat33&  device_Rprev     = device_cast<Mat33> (Rprev);
       Mat33&  device_Rprev_inv = device_cast<Mat33> (Rprev_inv);
       float3& device_tprev     = device_cast<float3> (tprev);
-      Matrix3frm Rcurr;
-      Vector3f tcurr;
+      Matrix3frm Rcurr,Rcurr_back;
+      Vector3f tcurr,tcurr_back;
       if(hint)
       {
-        Rcurr = hint->rotation().matrix();
-        tcurr = hint->translation().matrix();
+//         Rcurr = hint->rotation().matrix();
+//         tcurr = hint->translation().matrix()+d_t;
+//         Rcurr_back = hint->rotation().matrix();
+//         tcurr_back = hint->translation().matrix()+d_t;
+        
+        //sunguofei
+        //利用外部设备得到的ΔR和Δt，计算这一帧的初值
+        Matrix3frm dr=hint->rotation().matrix();
+        Vector3f dt=hint->translation().matrix();
+        Rcurr=d_R*dr*Rprev;
+        tcurr=d_R*dt+tprev;
+        Rcurr_back=Rcurr;tcurr_back=tcurr;
       }
       else
       {
         Rcurr = Rprev; // tranform to global coo for ith camera pose
         tcurr = tprev;
+        //Rcurr_back = init_Rcam_;
+        //tcurr_back = init_tcam_;
       }
+      double cond_final=1000;
       {
         //ScopeTime time("icp-all");
         for (int level_index = LEVELS-1; level_index>=0; --level_index)
@@ -345,15 +368,26 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 			//sunguofei
 			Eigen::Matrix<double,6,6,Eigen::RowMajor>::EigenvaluesReturnType eigenvalues = A.eigenvalues();
 			double cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
-			cond=sqrt(cond);
+			cond_final=cond=sqrt(cond);
 			cout<<"condition of A: "<<cond<<endl;
+//             if (cond>100)
+//             {
+//                 Rcurr=Rcurr_back;tcurr=tcurr_back;
+//                 break;
+//             }
 
             if (fabs (det) < 1e-15 || pcl_isnan (det))
             {
               if (pcl_isnan (det)) cout << "qnan" << endl;
 
-              reset ();
-              return (false);
+//               reset ();
+//               return (false);
+
+              //sunguofei
+              //不进行重置，而是就用外部设备得到的RT作为输出结果
+              //Rcurr=Rcurr_back;tcurr=tcurr_back;
+              cond_final=1000;
+              break;
             }
             //float maxc = A.maxCoeff();
 
@@ -374,8 +408,20 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         }
       }
       //save tranform
-      rmats_.push_back (Rcurr);
-      tvecs_.push_back (tcurr);
+      if (cond_final>100)
+      {
+          rmats_.push_back (Rcurr_back);
+          tvecs_.push_back (tcurr_back);
+      }
+      else
+      {
+          rmats_.push_back (Rcurr);
+          tvecs_.push_back (tcurr);
+      }
+
+      //sunguofei
+      //rmats_.push_back (Rcurr_back);
+      //tvecs_.push_back (tcurr_back);
   } 
   else /* if (disable_icp_) */
   {

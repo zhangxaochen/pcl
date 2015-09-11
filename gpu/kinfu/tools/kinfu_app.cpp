@@ -813,9 +813,31 @@ struct KinFuApp
         evaluation_ptr_->fx, evaluation_ptr_->fy, evaluation_ptr_->cx, evaluation_ptr_->cy) );
   }
   
-  void execute(const PtrStepSz<const unsigned short>& depth, const PtrStepSz<const KinfuTracker::PixelRGB>& rgb24, bool has_data)
+  //void execute(const PtrStepSz<const unsigned short>& depth, const PtrStepSz<const KinfuTracker::PixelRGB>& rgb24, bool has_data)
+  //sunguofei
+  void execute(const PtrStepSz<const unsigned short>& depth, const PtrStepSz<const KinfuTracker::PixelRGB>& rgb24, bool has_data,vector<double> R_t)
   {        
     bool has_image = false;
+    //sunguofei
+    Eigen::Affine3f hint;//=(Eigen::Affine3f *)0;
+    Eigen::Matrix3f M_tmp;
+//     for (int i=0;i<3;++i)
+//     {
+//         M_tmp(i,3)=R_t[i];
+//         M_tmp(3,i)=0;
+//     }
+    Eigen::Vector3f T_tmp;
+    for (int i=0;i<3;++i)
+    {
+            T_tmp(i,0)=R_t[i]/1000;
+    }
+    for (int i=0;i<9;++i)
+    {
+        M_tmp(i/3,i%3)=R_t[i+3];
+    }
+    cout<<"determinant of rotation: "<<M_tmp.determinant()<<endl;
+    hint.linear()=M_tmp;
+    hint.translation()=T_tmp;
       
     if (has_data)
     {
@@ -830,7 +852,7 @@ struct KinFuApp
         if (integrate_colors_)
           has_image = kinfu_ (depth_device_, image_view_.colors_device_);
         else
-          has_image = kinfu_ (depth_device_);                  
+          has_image = kinfu_ (depth_device_,&hint);                  
       }
 
       // process camera pose
@@ -1114,6 +1136,36 @@ struct KinFuApp
     size_t pngVecSz = pngFnames.size();
     for(size_t i = 0; i < pngVecSz; i++){
         string &fn = pngFnames[i];
+        //sunguofei
+#if 0
+        //当前读进来的RT已经是dR dt了
+        vector<double> rt=synthetic_RT[i];
+#else
+        //当前读进来的RT是原始的RT，并不是dR dt
+        vector<double> rt;
+        if (i==0)
+        {
+            rt=synthetic_RT[i];
+        }
+        else
+        {
+            rt.resize(12,0);
+            vector<double> rt0=synthetic_RT[i-1];
+            vector<double> rt1=synthetic_RT[i];
+            for (int j=0;j<3;++j)
+            {
+                rt[j]=rt1[j]-rt0[j];
+            }
+            for (int j=0;j<3;++j)
+            {
+                for (int k=0;k<3;++k)
+                {
+                    rt[3+j*3+k]+=rt1[3+j*3+0]*rt0[3+k*3+0]+rt1[3+j*3+1]*rt0[3+k*3+1]+rt1[3+j*3+2]*rt0[3+k*3+2];
+                }
+            }
+        }
+#endif
+
         printf("%s\n", fn.c_str());
         Mat dmat = imread(fn, IMREAD_UNCHANGED);
         Mat dmat8u;
@@ -1127,7 +1179,7 @@ struct KinFuApp
         depth_.data = (ushort*)dmat.data;
 
         bool has_data = true; //fake flag;
-        try { this->execute (depth_, rgb24_, has_data); }
+        try { this->execute (depth_, rgb24_, has_data, rt); }
         catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
         catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
 
@@ -1243,6 +1295,8 @@ struct KinFuApp
   vector<string> pngFnames;
   bool isReadOn;
   int png_fps;
+  //sunguofei
+  vector<vector<double>> synthetic_RT;
 
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   static void
@@ -1384,6 +1438,9 @@ main (int argc, char* argv[])
   //zhangxaochen:
   std::string png_dir;
   vector<string> pngFnames;
+  //sunguofei
+  vector<vector<double>> R_t;
+
   int png_fps = 15;
 
   try
@@ -1418,6 +1475,23 @@ main (int argc, char* argv[])
     {
         pngFnames = zc::getFnamesInDir(png_dir, ".png");
         std::sort(pngFnames.begin(), pngFnames.end());
+
+        //sunguofei
+        ifstream synthetic_rt;
+        string path_rt=png_dir+"/syntheticRT.txt";
+        cout<<path_rt<<endl;
+        synthetic_rt.open(path_rt);
+        for (int i=0;i<pngFnames.size();++i)
+        {
+            vector<double> rt;
+            for (int j=0;j<12;++j)
+            {
+                double tmp;
+                synthetic_rt>>tmp;
+                rt.push_back(tmp);
+            }
+            R_t.push_back(rt);
+        }
 
         pc::parse_argument(argc, argv, "-png-fps", png_fps);
     }
@@ -1458,6 +1532,8 @@ main (int argc, char* argv[])
   //zhangxaochen:
   app.pngFnames = pngFnames;
   app.png_fps = png_fps;
+  //sunguofei
+  app.synthetic_RT=R_t;
 
   if (pc::parse_argument (argc, argv, "-eval", eval_folder) > 0)
     app.toggleEvaluationMode(eval_folder, match_file);
