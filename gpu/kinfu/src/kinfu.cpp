@@ -365,11 +365,11 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             //checking nullspace
             double det = A.determinant ();
 
-			//sunguofei
-			Eigen::Matrix<double,6,6,Eigen::RowMajor>::EigenvaluesReturnType eigenvalues = A.eigenvalues();
-			double cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
-			cond_final=cond=sqrt(cond);
-			cout<<"condition of A: "<<cond<<endl;
+            //sunguofei
+            Eigen::Matrix<double,6,6,Eigen::RowMajor>::EigenvaluesReturnType eigenvalues = A.eigenvalues();
+            double cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
+            cond_final=cond=sqrt(cond);
+            cout<<"condition of A: "<<cond<<endl;
 //             if (cond>100)
 //             {
 //                 Rcurr=Rcurr_back;tcurr=tcurr_back;
