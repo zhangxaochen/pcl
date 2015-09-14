@@ -1,6 +1,13 @@
 import numpy as np
-import transformations as tf
 %pylab
+# import transformations as tf
+import sys
+if sys.version_info >= (3, 0):
+	print "Sorry, requires Python 2.x, not Python 3.x\n"
+	sys.exit(-1)
+
+import imp
+tf=imp.load_source('transformations', r'D:\opencv300\sources\modules\python\test\transformations.py')
 
 '一些别名'
 tf.e2m = tf.euler_matrix
@@ -12,6 +19,7 @@ tf.q2e = tf.euler_from_quaternion
 tf.m2r = tf.rotation_from_matrix
 tf.r2m = tf.rotation_matrix
 
+%cd E:\oni_data\synthetic-scene\rotateY_onecube_quaternion_matrix
 rtGtFn = r'syntheticRT_quaternion.txt'
 rtKfFn = r'rotateY_onecube_quaternion_matrix.csv'
 rtGt = np.loadtxt(rtGtFn, delimiter=' ')
