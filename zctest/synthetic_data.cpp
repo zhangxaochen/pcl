@@ -7,6 +7,7 @@
 using namespace std;
 using namespace cv;
 
+
 int number=0;
 static GLfloat spin_x=0.0,spin_y=0.0,spin_z=0.0;
 bool flag=false;
