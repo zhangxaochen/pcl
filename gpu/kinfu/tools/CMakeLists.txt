@@ -28,6 +28,8 @@ if(WITH_OPENNI)
 	message(STATUS "ZC: path := $ENV{path}")
 	if(OpenCV_FOUND)
 		target_link_libraries("${the_target}" ${OpenCV_LIBS})
+		add_definitions(-DHAVE_OPENCV)
+		message(STATUS "ZC: gpu/kinfu/tools/-> HAVE_OPENCV is: ${HAVE_OPENCV}")
 	endif()
 
 	## RECORD TSDFVOLUME

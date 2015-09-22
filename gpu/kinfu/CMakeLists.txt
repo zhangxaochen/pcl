@@ -20,6 +20,13 @@ PCL_SET_SUBSYS_INCLUDE_DIR("${SUBSYS_NAME}" "${SUBSYS_PATH}")
 mark_as_advanced("BUILD_${SUBSYS_NAME}")
 
 if (build)
+    #zhangxaochen:
+    find_package(OpenCV QUIET)
+    if (OPENCV_FOUND)
+        add_definitions(-DHAVE_OPENCV)
+        message(STATUS "ZC: gpu/kinfu/-> HAVE_OPENCV is: ${HAVE_OPENCV}")
+    endif()
+
     REMOVE_VTK_DEFINITIONS()
     FILE(GLOB incs include/pcl/gpu/kinfu/*.h*)
     FILE(GLOB srcs src/*.cpp src/*.h*)
