@@ -53,6 +53,10 @@ namespace pcl
     typedef DeviceArray2D<ushort> DepthMap;
     typedef float4 PointType;
 
+    //sunguofei---contour cue
+    typedef unsigned char _uchar;
+    typedef DeviceArray2D<_uchar> ContourMask;
+
     //TSDF fixed point divisor (if old format is enabled)
     const int DIVISOR = 32767;     // SHRT_MAX;
 
@@ -436,6 +440,27 @@ namespace pcl
       */
     void
     generateTriangles(const PtrStep<short2>& volume, const DeviceArray2D<int>& occupied_voxels, const float3& volume_size, DeviceArray<PointType>& output);
+
+    //sunguofei---contour cue
+    //adding the following functions:
+
+    /** \brief Compute contour generator in the depth map
+      * \param[in] depth map
+      * \param[out] mask of contours
+      */
+    void computeContours(const DepthMap& src,ContourMask& dst);
+
+    /** \brief Compute contours candidate in the synthetic map
+      * \param[in] normal map
+      * \param[out] mask of contours candidate
+      */
+    void computeCandidate(const MapArr& src,ContourMask& dst,double focal_length);
+
+    /** \brief impainting the depth map
+     * \param[in] depth map
+     * \param[out] impainted depth map
+     */
+    void impaint(const DepthMap& src,DepthMap dst);
   }
 }
 

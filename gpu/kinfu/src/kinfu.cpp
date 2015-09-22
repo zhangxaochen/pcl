@@ -52,6 +52,7 @@
 #ifdef HAVE_OPENCV
   #include <opencv2/opencv.hpp>
   #include <opencv2/gpu/gpu.hpp>
+using namespace cv;
 #endif
 
 using namespace std;
@@ -238,6 +239,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
   if (!disable_icp_)
   {
+      ContourMask normal_mask;
+      ContourMask mask;
       {
         //ScopeTime time(">>> Bilateral, pyr-down-all, create-maps-all");
         //depth_raw.copyTo(depths_curr[0]);
@@ -245,6 +248,9 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
         if (max_icp_distance_ > 0)
           device::truncateDepth(depths_curr_[0], max_icp_distance_);
+
+        //sunguofei---contour cue
+        device::computeContours(depths_curr_[0],mask);
 
         for (int i = 1; i < LEVELS; ++i)
           device::pyrDown (depths_curr_[i-1], depths_curr_[i]);
@@ -255,8 +261,33 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           //device::createNMap(vmaps_curr_[i], nmaps_curr_[i]);
           computeNormalsEigen (vmaps_curr_[i], nmaps_curr_[i]);
         }
+        device::computeCandidate(nmaps_curr_[0],normal_mask,525);
         pcl::device::sync ();
       }
+      //sunguofei---contour cue
+      //visualization
+
+       Mat N_map=Mat::zeros(640,480,CV_8U);
+       mask.download(N_map,8);
+
+//       N_map=normal_mask.data_();
+//       Mat Contour_map=Mat::zeros(640,480,CV_8U);
+//       Contour_map=mask.data_();
+//       for (int i=0;i<N_map.rows;++i)
+//       {
+//           for (int j=0;j<N_map.cols;++j)
+//           {
+//               int a=normal_mask.ptr(i)[j];
+//               N_map.at<uchar>(i,j)=normal_mask.ptr(i)[j];
+//               Contour_map.at<uchar>(i,j)=mask.ptr(i)[j];
+//           }
+//       }
+//       imshow("contour candidate",N_map);
+//       imshow("contour candidate",Contour_map);
+//       waitKey(0);
+
+      //build kd tree for vertex on the normal mask
+
 
       //can't perform more on first frame
       if (global_time_ == 0)

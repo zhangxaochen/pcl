@@ -172,6 +172,87 @@ namespace pcl
 			if(depth.ptr(y)[x] > max_distance_mm)
 				depth.ptr(y)[x] = 0;
 	}
+
+    //sunguofei---contour cue
+
+    __global__ void
+    computeContoursKernel(PtrStepSz<ushort> src, PtrStepSz<_uchar> dst,int thresh)
+	{
+		int x = blockIdx.x * blockDim.x + threadIdx.x;
+		int y = blockIdx.y * blockDim.y + threadIdx.y;
+        
+		if (x < src.cols && y < src.rows)
+        {
+            dst.ptr(y)[x]=0;
+            int x_left=max(0,x-1),x_right=min(x-1,src.cols),y_top=max(0,x-1),y_down=min(x-1,src.cols);
+            int val=src.ptr(y)[x];
+            int d[8];
+            d[0]=src.ptr(y)[x_left];d[1]=src.ptr(y_top)[x_left];d[2]=src.ptr(y_top)[x];d[3]=src.ptr(y_top)[x_right];
+            d[4]=src.ptr(y)[x_right];d[5]=src.ptr(y_down)[x_right];d[6]=src.ptr(y_down)[x];d[7]=src.ptr(y_down)[x_left];
+            for(int i=0;i<8;++i)
+            {
+                if (abs(val-d[i])>thresh)
+                {
+                    dst.ptr(y)[x]=255;break;
+                }
+            }
+        }
+	}
+
+    __global__ void
+    computeCandidateKernel(PtrStepSz<ushort> src,PtrStepSz<_uchar> dst,double focal_length,double thresh)
+    {
+        int x = blockIdx.x * blockDim.x + threadIdx.x;
+		int y = blockIdx.y * blockDim.y + threadIdx.y;
+        if (x<dst.cols && y<dst.rows)
+        {
+            double cx=dst.cols/2,cy=dst.rows/2;
+            double x1=src.ptr(y*3)[x],y1=src.ptr(y*3+1)[x],z1=src.ptr(y*3+2)[x];
+            double x2=cx-x,y2=cy-y,z2=focal_length;
+            double res=(x1*x2+y1*y2+z1*z2)/sqrt((x1*x1+y1*y1+z1*z1)*(x2*x2+y2*y2+z2*z2));
+            if (abs(res)<thresh)
+                dst.ptr(y)[x]=255;
+            else
+                dst.ptr(y)[x]=0;
+        }
+    }
+
+    __global__ void
+    impaintKernel(PtrStepSz<ushort> src,PtrStepSz<ushort> dst)
+    {
+        int x=blockIdx.x*blockDim.x+threadIdx.x;
+        if(x<dst.rows)
+        {
+            int depth_paint=0;
+            bool flag=true;
+            for(int y=0;y<dst.cols();++y)
+            {
+                int depth=src.ptr(x)[y];
+                if(depth!=0)
+                {
+                    dst.ptr(x)[y]=depth;
+                    if(flag)
+                        depth_paint=depth;
+                    else
+                    {
+                        depth_paint=max(depth,depth_paint);
+                        for(int i=y-1;y>=0;--y)
+                        {
+                            if (dst.ptr(x)[i]!=0)
+                                dst.ptr(x)[i]=depth_paint;
+                            else
+                                break;
+                        }
+                    }
+                }
+                else
+                {
+                    dst.ptr(x)[y]=0;
+                    flag=false;
+                }
+            }
+        }
+    }
   }
 }
 
@@ -210,6 +291,43 @@ pcl::device::truncateDepth(DepthMap& depth, float max_distance)
   dim3 grid (divUp (depth.cols (), block.x), divUp (depth.rows (), block.y));
 
   truncateDepthKernel<<<grid, block>>>(depth, static_cast<ushort>(max_distance * 1000.f));
+
+  cudaSafeCall ( cudaGetLastError () );
+}
+
+//sunguofei---contour cue
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void pcl::device::computeContours(const DepthMap& src,ContourMask& dst)
+{
+  dim3 block (32, 8);
+  dim3 grid (divUp (src.cols (), block.x), divUp (src.rows (), block.y));
+  dst.create(src.rows(),src.cols());
+  computeContoursKernel<<<grid, block>>>(src, dst, 50);
+
+  cudaSafeCall ( cudaGetLastError () );
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void pcl::device::computeCandidate(const MapArr& src,ContourMask& dst,double focal_length)
+{
+  dst.create(src.rows ()/3, src.cols ());
+  dim3 block (32, 8);
+  dim3 grid (divUp (src.cols (), block.x), divUp (src.rows (), block.y));
+
+  computeCandidateKernel<<<grid, block>>>(src, dst, focal_length, 0.2);
+
+  cudaSafeCall ( cudaGetLastError () );
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void pcl::device::impaint(const DepthMap& src,DepthMap dst)
+{
+  dst.create(src.rows(),src.cols());
+  dim3 block (32);
+  dim3 grid (divUp (src.rows (), block.x));
+
+  impaintKernel<<<grid, block>>>(src, dst);
 
   cudaSafeCall ( cudaGetLastError () );
 }

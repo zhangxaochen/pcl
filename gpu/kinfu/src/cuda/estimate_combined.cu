@@ -157,6 +157,68 @@ namespace pcl
         return (true);
       }
 
+      //sunguofei---contour cue
+      __device__ __forceinline__ bool
+      search_contourCue (int x, int y, float3& n, float3& d, float3& s) const
+      {
+          
+        float3 ncurr;
+        ncurr.x = nmap_curr.ptr (y)[x];
+
+        if (isnan (ncurr.x))
+          return (false);
+
+        float3 vcurr;
+        vcurr.x = vmap_curr.ptr (y       )[x];
+        vcurr.y = vmap_curr.ptr (y + rows)[x];
+        vcurr.z = vmap_curr.ptr (y + 2 * rows)[x];
+
+        float3 vcurr_g = Rcurr * vcurr + tcurr;
+
+        float3 vcurr_cp = Rprev_inv * (vcurr_g - tprev);         // prev camera coo space
+
+        //find conresponding using kd tree
+
+        int2 ukr;         //projection
+        ukr.x = __float2int_rn (vcurr_cp.x * intr.fx / vcurr_cp.z + intr.cx);      //4
+        ukr.y = __float2int_rn (vcurr_cp.y * intr.fy / vcurr_cp.z + intr.cy);                      //4
+
+        if (ukr.x < 0 || ukr.y < 0 || ukr.x >= cols || ukr.y >= rows || vcurr_cp.z < 0)
+          return (false);
+
+        float3 nprev_g;
+        nprev_g.x = nmap_g_prev.ptr (ukr.y)[ukr.x];
+
+        if (isnan (nprev_g.x))
+          return (false);
+
+        float3 vprev_g;
+        vprev_g.x = vmap_g_prev.ptr (ukr.y       )[ukr.x];
+        vprev_g.y = vmap_g_prev.ptr (ukr.y + rows)[ukr.x];
+        vprev_g.z = vmap_g_prev.ptr (ukr.y + 2 * rows)[ukr.x];
+
+        float dist = norm (vprev_g - vcurr_g);
+        if (dist > distThres)
+          return (false);
+
+        ncurr.y = nmap_curr.ptr (y + rows)[x];
+        ncurr.z = nmap_curr.ptr (y + 2 * rows)[x];
+
+        float3 ncurr_g = Rcurr * ncurr;
+
+        nprev_g.y = nmap_g_prev.ptr (ukr.y + rows)[ukr.x];
+        nprev_g.z = nmap_g_prev.ptr (ukr.y + 2 * rows)[ukr.x];
+
+        float sine = norm (cross (ncurr_g, nprev_g));
+
+        if (sine >= angleThres)
+          return (false);
+        n = nprev_g;
+        d = vprev_g;
+        s = vcurr_g;
+        return (true);
+      }
+
       __device__ __forceinline__ void
       operator () () const
       {
