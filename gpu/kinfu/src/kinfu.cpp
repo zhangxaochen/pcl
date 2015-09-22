@@ -267,8 +267,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       //sunguofei---contour cue
       //visualization
 
-       Mat N_map=Mat::zeros(640,480,CV_8U);
-       mask.download(N_map,8);
+//        Mat N_map=Mat::zeros(640,480,CV_8U);
+//        mask.download(N_map,8);
 
 //       N_map=normal_mask.data_();
 //       Mat Contour_map=Mat::zeros(640,480,CV_8U);
