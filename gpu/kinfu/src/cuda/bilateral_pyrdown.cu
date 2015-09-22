@@ -225,7 +225,7 @@ namespace pcl
         {
             int depth_paint=0;
             bool flag=true;
-            for(int y=0;y<dst.cols();++y)
+            for(int y=0;y<dst.cols;++y)
             {
                 int depth=src.ptr(x)[y];
                 if(depth!=0)
