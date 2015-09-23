@@ -548,6 +548,7 @@ struct SceneCloudView
     {
       DeviceArray<PointXYZ> extracted = kinfu.volume().fetchCloud (cloud_buffer_device_);             
 
+      dbgPrintln("ZC: compute_normals_: %d", compute_normals_);
       if (compute_normals_)
       {
         kinfu.volume().fetchNormals (extracted, normals_device_);
@@ -701,6 +702,7 @@ struct KinFuApp
   
   KinFuApp(pcl::Grabber& source, float vsz, int icp, int viz, boost::shared_ptr<CameraPoseProcessor> pose_processor=boost::shared_ptr<CameraPoseProcessor> () ) : exit_ (false), scan_ (false), scan_mesh_(false), scan_volume_ (false), independent_camera_ (false),
       registration_ (false), integrate_colors_ (false), pcd_source_ (false), focal_length_(-1.f), capture_ (source), scene_cloud_view_(viz), image_view_(viz), time_ms_(0), icp_(icp), viz_(viz), pose_processor_ (pose_processor)
+      ,png_source_(false), fid_(0)
   {    
     //Init Kinfu Tracker
     Eigen::Vector3f volume_size = Vector3f::Constant (vsz/*meters*/);    
@@ -813,32 +815,33 @@ struct KinFuApp
         evaluation_ptr_->fx, evaluation_ptr_->fy, evaluation_ptr_->cx, evaluation_ptr_->cy) );
   }
   
-  //void execute(const PtrStepSz<const unsigned short>& depth, const PtrStepSz<const KinfuTracker::PixelRGB>& rgb24, bool has_data)
-  //sunguofei
-  void execute(const PtrStepSz<const unsigned short>& depth, const PtrStepSz<const KinfuTracker::PixelRGB>& rgb24, bool has_data,vector<double> R_t)
+  void execute(const PtrStepSz<const unsigned short>& depth, const PtrStepSz<const KinfuTracker::PixelRGB>& rgb24, bool has_data)
+  //sunguofei   //zhangxaochen: 不要随意改接口
+  //void execute(const PtrStepSz<const unsigned short>& depth, const PtrStepSz<const KinfuTracker::PixelRGB>& rgb24, bool has_data,vector<double> R_t)
   {        
     bool has_image = false;
+
     //sunguofei
     Eigen::Affine3f hint;//=(Eigen::Affine3f *)0;
-    Eigen::Matrix3f M_tmp;
-//     for (int i=0;i<3;++i)
-//     {
-//         M_tmp(i,3)=R_t[i];
-//         M_tmp(3,i)=0;
-//     }
-    Eigen::Vector3f T_tmp;
-    for (int i=0;i<3;++i)
-    {
+
+    //zhangxaochen:
+    const vector<double> &R_t = this->csvRtCurrRow_;
+    if(this->png_source_ && this->csv_rt_hint_){
+        Eigen::Matrix3f M_tmp;
+        Eigen::Vector3f T_tmp;
+        for (int i=0;i<3;++i)
+        {
             T_tmp(i,0)=R_t[i]/1000;
+        }
+        for (int i=0;i<9;++i)
+        {
+            M_tmp(i/3,i%3)=R_t[i+3];
+        }
+        cout<<"determinant of rotation: "<<M_tmp.determinant()<<endl;
+        hint.linear()=M_tmp;
+        hint.translation()=T_tmp;
     }
-    for (int i=0;i<9;++i)
-    {
-        M_tmp(i/3,i%3)=R_t[i+3];
-    }
-    cout<<"determinant of rotation: "<<M_tmp.determinant()<<endl;
-    hint.linear()=M_tmp;
-    hint.translation()=T_tmp;
-      
+
     if (has_data)
     {
       depth_device_.upload (depth.data, depth.step, depth.rows, depth.cols);
@@ -851,8 +854,15 @@ struct KinFuApp
         //run kinfu algorithm
         if (integrate_colors_)
           has_image = kinfu_ (depth_device_, image_view_.colors_device_);
-        else
-          has_image = kinfu_ (depth_device_,&hint);                  
+        else{
+          //has_image = kinfu_ (depth_device_,&hint);                  
+          if(csv_rt_hint_){
+              has_image = kinfu_ (depth_device_, &hint);                  
+          }
+          else{
+              has_image = kinfu_ (depth_device_);                  
+          }
+        }
       }
 
       // process camera pose
@@ -1061,131 +1071,140 @@ struct KinFuApp
     typedef boost::shared_ptr<Image> ImagePtr;
         
     //zhangxaochen:
-#if 0 //mutex-lock 获取 & 处理数据异步
-    boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1_dev = boost::bind (&KinFuApp::source_cb2_device, this, _1, _2, _3);
-    boost::function<void (const DepthImagePtr&)> func2_dev = boost::bind (&KinFuApp::source_cb1_device, this, _1);
+//#if 0 //mutex-lock 获取 & 处理数据异步
+    if(!this->png_source_){ //mutex-lock 获取 & 处理数据异步
 
-    boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1_oni = boost::bind (&KinFuApp::source_cb2_oni, this, _1, _2, _3);
-    boost::function<void (const DepthImagePtr&)> func2_oni = boost::bind (&KinFuApp::source_cb1_oni, this, _1);
-    
-    bool is_oni = dynamic_cast<pcl::ONIGrabber*>(&capture_) != 0;
-    boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1 = is_oni ? func1_oni : func1_dev;
-    boost::function<void (const DepthImagePtr&)> func2 = is_oni ? func2_oni : func2_dev;
+        boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1_dev = boost::bind (&KinFuApp::source_cb2_device, this, _1, _2, _3);
+        boost::function<void (const DepthImagePtr&)> func2_dev = boost::bind (&KinFuApp::source_cb1_device, this, _1);
 
-    boost::function<void (const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr&) > func3 = boost::bind (&KinFuApp::source_cb3, this, _1);
+        boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1_oni = boost::bind (&KinFuApp::source_cb2_oni, this, _1, _2, _3);
+        boost::function<void (const DepthImagePtr&)> func2_oni = boost::bind (&KinFuApp::source_cb1_oni, this, _1);
 
-    bool need_colors = integrate_colors_ || registration_;
-    if ( pcd_source_ && !capture_.providesCallback<void (const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr&)>() )
-    {
-      std::cout << "grabber doesn't provide pcl::PointCloud<pcl::PointXYZRGBA> callback !\n";
-    }
-    boost::signals2::connection c = pcd_source_? capture_.registerCallback (func3) : need_colors ? capture_.registerCallback (func1) : capture_.registerCallback (func2);
+        bool is_oni = dynamic_cast<pcl::ONIGrabber*>(&capture_) != 0;
+        boost::function<void (const ImagePtr&, const DepthImagePtr&, float constant)> func1 = is_oni ? func1_oni : func1_dev;
+        boost::function<void (const DepthImagePtr&)> func2 = is_oni ? func2_oni : func2_dev;
 
-    {
-      boost::unique_lock<boost::mutex> lock(data_ready_mutex_);
+        boost::function<void (const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr&) > func3 = boost::bind (&KinFuApp::source_cb3, this, _1);
 
-      if (!triggered_capture)
-          capture_.start (); // Start stream
-
-      bool scene_view_not_stopped= viz_ ? !scene_cloud_view_.cloud_viewer_->wasStopped () : true;
-      bool image_view_not_stopped= viz_ ? !image_view_.viewerScene_->wasStopped () : true;
-          
-      while (!exit_ && scene_view_not_stopped && image_view_not_stopped)
-      { 
-        dbgPrintln("mainloop-while, locking~");
-        cout << boost::this_thread::get_id() << endl;
-
-        //cout << "mainloop-while, locking~" <<endl;
-        //zc: trigger 速度可能较慢, 
-        if (triggered_capture){
-            capture_.start(); // Triggers new frame
-            //cout << "capture_.start" << endl;
-            dbgPrint("capture_.start\n");
+        bool need_colors = integrate_colors_ || registration_;
+        if ( pcd_source_ && !capture_.providesCallback<void (const pcl::PointCloud<pcl::PointXYZRGBA>::ConstPtr&)>() )
+        {
+            std::cout << "grabber doesn't provide pcl::PointCloud<pcl::PointXYZRGBA> callback !\n";
         }
-        dbgPrint("timed_wait~\n");
+        boost::signals2::connection c = pcd_source_? capture_.registerCallback (func3) : need_colors ? capture_.registerCallback (func1) : capture_.registerCallback (func2);
+
+        {
+            boost::unique_lock<boost::mutex> lock(data_ready_mutex_);
+
+            if (!triggered_capture)
+                capture_.start (); // Start stream
+
+            bool scene_view_not_stopped= viz_ ? !scene_cloud_view_.cloud_viewer_->wasStopped () : true;
+            bool image_view_not_stopped= viz_ ? !image_view_.viewerScene_->wasStopped () : true;
+
+            while (!exit_ && scene_view_not_stopped && image_view_not_stopped)
+            { 
+                dbgPrintln("mainloop-while, locking~");
+                cout << boost::this_thread::get_id() << endl;
+
+                //cout << "mainloop-while, locking~" <<endl;
+                //zc: trigger 速度可能较慢, 
+                if (triggered_capture){
+                    capture_.start(); // Triggers new frame
+                    //cout << "capture_.start" << endl;
+                    dbgPrint("capture_.start\n");
+                }
+                dbgPrint("timed_wait~\n");
 #if 0 //改用阻塞式 wait, 不是跳帧, 是为了与 source_cb1_device 双射输出
-        data_ready_cond_.wait(lock);
-        bool has_data = true; //really?
+                data_ready_cond_.wait(lock);
+                bool has_data = true; //really?
 #elif 01 //改用 timed_wait, 但长时间 ( >10s)
-        bool has_data = data_ready_cond_.timed_wait (lock, boost::posix_time::millisec(3000));        
+                bool has_data = data_ready_cond_.timed_wait (lock, boost::posix_time::millisec(3000));        
 #else
-        bool has_data = data_ready_cond_.timed_wait (lock, boost::posix_time::millisec(100));        
+                bool has_data = data_ready_cond_.timed_wait (lock, boost::posix_time::millisec(100));        
 #endif //wait & timed_wait
-        static int fid = 0;
-        dbgPrint("has_data: %d; %d\n", has_data, fid);
-        //cout<<"has_data: "<<has_data<<"; "
-        //    <<fid<<endl;
-        fid++;
+                static int fid = 0;
+                dbgPrint("has_data: %d; %d\n", has_data, fid);
+                //cout<<"has_data: "<<has_data<<"; "
+                //    <<fid<<endl;
+                fid++;
 
-                       
-        try { this->execute (depth_, rgb24_, has_data); }
-        catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
-        catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
-        
-        if (viz_)
-            scene_cloud_view_.cloud_viewer_->spinOnce (3);
-      }
-      
-      if (!triggered_capture)     
-          capture_.stop (); // Stop stream
-    }
-    c.disconnect();
-#elif 1 //用 for-loop, 同步获取 & 处理数据
-#ifdef HAVE_OPENCV
-    dbgPrintln("---------------HAVE_OPENCV");
-    size_t pngVecSz = pngFnames.size();
-    for(size_t i = 0; i < pngVecSz; i++){
-        string &fn = pngFnames[i];
-        //sunguofei
-#if 0
-        //当前读进来的RT已经是dR dt了
-        vector<double> rt=synthetic_RT[i];
-#else
-        //当前读进来的RT是原始的RT，并不是dR dt
-        vector<double> rt;
-        if (i==0)
-        {
-            rt=synthetic_RT[i];
-        }
-        else
-        {
-            rt.resize(12,0);
-            vector<double> rt0=synthetic_RT[i-1];
-            vector<double> rt1=synthetic_RT[i];
-            for (int j=0;j<3;++j)
-            {
-                rt[j]=rt1[j]-rt0[j];
+
+                try { this->execute (depth_, rgb24_, has_data); }
+                catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
+                catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
+
+                if (viz_)
+                    scene_cloud_view_.cloud_viewer_->spinOnce (3);
             }
-            for (int j=0;j<3;++j)
+
+            if (!triggered_capture)     
+                capture_.stop (); // Stop stream
+        }
+        c.disconnect();
+    }
+//#elif 1 //用 for-loop, 同步获取 & 处理数据
+    else{ //this->png_source_ == true, 用 for-loop, 同步获取 & 处理数据
+#ifdef HAVE_OPENCV
+        dbgPrintln("---------------HAVE_OPENCV");
+        size_t pngVecSz = pngFnames_.size();
+        for(size_t i = 0; i < pngVecSz; i++){
+            string &fn = pngFnames_[i];
+            //sunguofei
+#if 0
+            //当前读进来的RT已经是dR dt了
+            vector<double> rt=synthetic_RT[i];
+#else
+            //当前读进来的RT是原始的RT，并不是dR dt
+            vector<double> rt;
+            if (i==0)
             {
-                for (int k=0;k<3;++k)
+                rt=synthetic_RT[i];
+            }
+            else
+            {
+                rt.resize(12,0);
+                vector<double> rt0=synthetic_RT[i-1];
+                vector<double> rt1=synthetic_RT[i];
+                for (int j=0;j<3;++j)
                 {
-                    rt[3+j*3+k]+=rt1[3+j*3+0]*rt0[3+k*3+0]+rt1[3+j*3+1]*rt0[3+k*3+1]+rt1[3+j*3+2]*rt0[3+k*3+2];
+                    rt[j]=rt1[j]-rt0[j];
+                }
+                for (int j=0;j<3;++j)
+                {
+                    for (int k=0;k<3;++k)
+                    {
+                        rt[3+j*3+k]+=rt1[3+j*3+0]*rt0[3+k*3+0]+rt1[3+j*3+1]*rt0[3+k*3+1]+rt1[3+j*3+2]*rt0[3+k*3+2];
+                    }
                 }
             }
-        }
 #endif
+            this->csvRtCurrRow_ = rt;
 
-        printf("%s\n", fn.c_str());
-        Mat dmat = imread(fn, IMREAD_UNCHANGED);
-        Mat dmat8u;
-        dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
-        imshow("dmat8u", dmat8u);
-        waitKey(this->png_fps > 0 ? int(1e3 / png_fps) : 0);
+            printf("%s\n", fn.c_str());
+            Mat dmat = imread(fn, IMREAD_UNCHANGED);
+            Mat dmat8u;
+            dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+            imshow("dmat8u", dmat8u);
+            int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
+            if(key==27) //Esc
+                break;
 
-        depth_.cols = dmat.cols;
-        depth_.rows = dmat.rows;
-        depth_.step = depth_.cols * depth_.elemSize();
-        depth_.data = (ushort*)dmat.data;
+            depth_.cols = dmat.cols;
+            depth_.rows = dmat.rows;
+            depth_.step = depth_.cols * depth_.elemSize();
+            depth_.data = (ushort*)dmat.data;
 
-        bool has_data = true; //fake flag;
-        try { this->execute (depth_, rgb24_, has_data, rt); }
-        catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
-        catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
+            bool has_data = true; //fake flag;
+            //try { this->execute (depth_, rgb24_, has_data, rt); }//@sunguofei, 不要随意改接口
+            try { this->execute (depth_, rgb24_, has_data); }
+            catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
+            catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
 
-    }
+        }//for-pngFnames_
+    }//else //this->png_source_ == true
 #endif //HAVE_OPENCV
-#endif //sync VS. async
+//#endif //sync VS. async
 
   }//startMainLoop
 
@@ -1291,10 +1310,17 @@ struct KinFuApp
   boost::shared_ptr<CameraPoseProcessor> pose_processor_;
 
   //zhangxaochen:
+  int fid_;
   bool png_source_;
-  vector<string> pngFnames;
-  bool isReadOn;
-  int png_fps;
+  string pngDir_;
+  vector<string> pngFnames_;
+  bool isReadOn_;
+  int png_fps_;
+  bool hasRtCsv_; //是否（在 pngDir_）存在 {R, t} csv 描述文件
+  bool csv_rt_hint_; //是否用 csv {R, t} 做初值？（不一定用）
+
+  vector<double> csvRtCurrRow_; //csv 文件读到的当前一行
+
   //sunguofei
   vector<vector<double>> synthetic_RT;
 
@@ -1338,7 +1364,7 @@ struct KinFuApp
         //zhangxaochen:
       case (int)' ':
           cout << "ZC: read a frame" << endl;
-          app->isReadOn = true;
+          app->isReadOn_ = true;
           break;
 
       default:
@@ -1474,6 +1500,11 @@ main (int argc, char* argv[])
     else if (pc::parse_argument (argc, argv, "-png-dir", png_dir) > 0)
     {
         pngFnames = zc::getFnamesInDir(png_dir, ".png");
+        if(0 == pngFnames.size()){
+            cout << "No PNG files found in folder: " << png_dir << endl;
+            return -1;
+        }
+
         std::sort(pngFnames.begin(), pngFnames.end());
 
         //sunguofei
@@ -1530,8 +1561,16 @@ main (int argc, char* argv[])
 
   KinFuApp app (*capture, volume_size, icp, visualization, pose_processor);
   //zhangxaochen:
-  app.pngFnames = pngFnames;
-  app.png_fps = png_fps;
+  app.pngFnames_ = pngFnames;
+  app.png_fps_ = png_fps;
+  if(!png_dir.empty()){
+      app.pngDir_ = png_dir;
+      app.png_source_ = true;
+  }
+
+  //
+  app.csv_rt_hint_ = pc::find_switch (argc, argv, "-csv_rt_hint");
+
   //sunguofei
   app.synthetic_RT=R_t;
 

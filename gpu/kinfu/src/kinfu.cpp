@@ -346,7 +346,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         Vector3f dt=hint->translation().matrix();
         Rcurr=d_R*dr*Rprev;
         tcurr=d_R*dt+tprev;
-        Rcurr_back=Rcurr;tcurr_back=tcurr;
+        Rcurr_back=Rcurr;
+        tcurr_back=tcurr;
       }
       else
       {
@@ -355,11 +356,18 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         //Rcurr_back = init_Rcam_;
         //tcurr_back = init_tcam_;
       }
-      double cond_final=1000;
+      const double 
+          condThresh = 1e2,
+          INVALID_COND = 1e8;
+      double cond = INVALID_COND;
+
+      bool illCondMat = false;
       {
         //ScopeTime time("icp-all");
         for (int level_index = LEVELS-1; level_index>=0; --level_index)
         {
+          if(hint && illCondMat)
+              break;
           int iter_num = icp_iterations_[level_index];
 
           MapArr& vmap_curr = vmaps_curr_[level_index];
@@ -398,8 +406,9 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
             //sunguofei
             Eigen::Matrix<double,6,6,Eigen::RowMajor>::EigenvaluesReturnType eigenvalues = A.eigenvalues();
-            double cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
-            cond_final=cond=sqrt(cond);
+            cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
+            cout << "eigenvalues: " << eigenvalues << endl;
+            cond=sqrt(cond);
             cout<<"condition of A: "<<cond<<endl;
 //             if (cond>100)
 //             {
@@ -407,18 +416,31 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 //                 break;
 //             }
 
+            if(hint && cond > condThresh){
+                cond = INVALID_COND;
+                illCondMat = true;
+                break; //仍然往下走，算一下
+            }
+
             if (fabs (det) < 1e-15 || pcl_isnan (det))
+            //if (fabs (det) < 1e-15 || pcl_isnan (det) || (hint && cond>INVALID_COND) )
             {
               if (pcl_isnan (det)) cout << "qnan" << endl;
 
-//               reset ();
-//               return (false);
+               reset ();
+               return (false);
 
               //sunguofei
               //不进行重置，而是就用外部设备得到的RT作为输出结果
               //Rcurr=Rcurr_back;tcurr=tcurr_back;
-              cond_final=1000;
-              break;
+              //cond=INVALID_COND;
+              //illCondMat = true;
+              //if(hint)
+              //    break; //仍然往下走，算一下
+              //else{
+              //    reset ();
+              //    return (false);
+              //}
             }
             //float maxc = A.maxCoeff();
 
@@ -435,11 +457,14 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             //compose
             tcurr = Rinc * tcurr + tinc;
             Rcurr = Rinc * Rcurr;
+//             if(illCondMat)
+//                 break; //仍然往下走，算一下
           }
         }
       }
       //save tranform
-      if (cond_final>100)
+      //if (cond>1e5)
+      if(hint && illCondMat)
       {
           rmats_.push_back (Rcurr_back);
           tvecs_.push_back (tcurr_back);
