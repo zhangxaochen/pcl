@@ -1176,6 +1176,9 @@ pcl::visualization::PCLVisualizerInteractorStyle::updateLookUpTableDisplay (bool
   ShapeActorMap::iterator sm_it;
   bool actor_found = false;
 
+  if (!lut_enabled_ && !add_lut)
+    return;
+
   if (lut_actor_id_ != "")  // Search if provided actor id is in CloudActorMap or ShapeActorMap
   {
     am_it = cloud_actors_->find (lut_actor_id_);
@@ -1270,15 +1273,12 @@ pcl::visualization::PCLVisualizerInteractorStyle::updateLookUpTableDisplay (bool
     }
   }
 
-  if (!actor_found)
-    PCL_WARN ("[updateLookUpTableDisplay] No actor was found with LUT information!\n");
-
-  if (!actor_found || (lut_enabled_ && add_lut))  // Remove actor
+  if ( (!actor_found && lut_enabled_) || (lut_enabled_ && add_lut))  // Remove actor
   {
     CurrentRenderer->RemoveActor (lut_actor_);
     lut_enabled_ = false;
   }
-  else if (!lut_enabled_ && add_lut)  // Add actor
+  else if (!lut_enabled_ && add_lut && actor_found)  // Add actor
   {
     CurrentRenderer->AddActor (lut_actor_);
     lut_actor_->SetVisibility (true);
