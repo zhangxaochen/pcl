@@ -761,12 +761,13 @@ struct KinFuApp
   }
 
   //zhangxaochen:
-  void initGenDepthView(){
+  void initGenDepthView(bool viz){
+      if(!viz)
+          return;
       image_view_.viewerGdepth_ = pcl::visualization::ImageViewer::Ptr(new pcl::visualization::ImageViewer);
       image_view_.viewerGdepth_->setWindowTitle("model-generated-depth");
       image_view_.viewerGdepth_->setPosition(1000, 100);
-      if(viz_)
-          image_view_.viewerGdepth_->registerKeyboardCallback(keyboard_callback, this);
+      image_view_.viewerGdepth_->registerKeyboardCallback(keyboard_callback, this);
   }//initGenDepthView
 
   void
@@ -1595,7 +1596,7 @@ main (int argc, char* argv[])
 
   if(pc::find_switch(argc, argv, "--gen-depth") || pc::find_switch(argc, argv, "-gd")){
       app.show_gdepth_ = true; //似乎多余。暂时放着
-      app.initGenDepthView();
+      app.initGenDepthView(viz_);
   }
 
   //sunguofei
