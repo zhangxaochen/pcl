@@ -366,7 +366,8 @@ struct CurrentFrameCloudView
     cloud_viewer_.setPointCloudRenderingProperties (visualization::PCL_VISUALIZER_POINT_SIZE, 1);
     cloud_viewer_.addCoordinateSystem (1.0, "global");
     cloud_viewer_.initCameraParameters ();
-    cloud_viewer_.setPosition (0, 500);
+    //cloud_viewer_.setPosition (0, 500);
+    cloud_viewer_.setPosition (1000, 250);
     cloud_viewer_.setSize (640, 480);
     cloud_viewer_.setCameraClipDistances (0.01, 10.01);
   }
@@ -413,6 +414,11 @@ struct ImageView
         viewerDepth_->setWindowTitle ("Kinect Depth stream");
         viewerDepth_->setPosition (640, 0);
         //viewerColor_.setWindowTitle ("Kinect RGB stream");
+
+        //zhangxaochen:
+        //viewerGdepth_ = pcl::visualization::ImageViewer::Ptr(new pcl::visualization::ImageViewer);
+        //viewerGdepth_->setWindowTitle("model-generated-depth");
+        //viewerGdepth_->setPosition(1000, 100);
     }
   }
 
@@ -470,7 +476,8 @@ struct ImageView
     generated_depth_.download(data, c);
 
     if (viz_)
-        viewerDepth_->showShortImage (&data[0], generated_depth_.cols(), generated_depth_.rows(), 0, 5000, true);
+        //viewerDepth_->showShortImage (&data[0], generated_depth_.cols(), generated_depth_.rows(), 0, 5000, true);
+        viewerGdepth_->showShortImage (&data[0], generated_depth_.cols(), generated_depth_.rows(), 0, 5000, true);
   }
 
   void
@@ -487,6 +494,9 @@ struct ImageView
   visualization::ImageViewer::Ptr viewerScene_;
   visualization::ImageViewer::Ptr viewerDepth_;
   //visualization::ImageViewer viewerColor_;
+
+  //zhangxaochen:
+  visualization::ImageViewer::Ptr viewerGdepth_; //generated-depth-viewer
 
   KinfuTracker::View view_device_;
   KinfuTracker::View colors_device_;
@@ -750,6 +760,15 @@ struct KinFuApp
     current_frame_cloud_view_->setViewerPose (kinfu_.getCameraPose ());
   }
 
+  //zhangxaochen:
+  void initGenDepthView(){
+      image_view_.viewerGdepth_ = pcl::visualization::ImageViewer::Ptr(new pcl::visualization::ImageViewer);
+      image_view_.viewerGdepth_->setWindowTitle("model-generated-depth");
+      image_view_.viewerGdepth_->setPosition(1000, 100);
+      if(viz_)
+          image_view_.viewerGdepth_->registerKeyboardCallback(keyboard_callback, this);
+  }//initGenDepthView
+
   void
   initRegistration ()
   {        
@@ -873,6 +892,8 @@ struct KinFuApp
 
       image_view_.showDepth (depth);
       //image_view_.showGeneratedDepth(kinfu_, kinfu_.getCameraPose());
+      if(image_view_.viewerGdepth_ != nullptr)
+          image_view_.showGeneratedDepth(kinfu_, kinfu_.getCameraPose());
     }
 
     if (scan_)
@@ -1318,6 +1339,7 @@ struct KinFuApp
   int png_fps_;
   bool hasRtCsv_; //是否（在 pngDir_）存在 {R, t} csv 描述文件
   bool csv_rt_hint_; //是否用 csv {R, t} 做初值？（不一定用）
+  bool show_gdepth_; //show-generated-depth. 是否显示当前时刻 (模型, 视角) 对应的深度图
 
   vector<double> csvRtCurrRow_; //csv 文件读到的当前一行
 
@@ -1568,8 +1590,13 @@ main (int argc, char* argv[])
       app.png_source_ = true;
   }
 
-  //
+  //启用 hint(目前 png_dir -> syntheticRT.txt) 做 ICP 初值
   app.csv_rt_hint_ = pc::find_switch (argc, argv, "-csv_rt_hint");
+
+  if(pc::find_switch(argc, argv, "--gen-depth") || pc::find_switch(argc, argv, "-gd")){
+      app.show_gdepth_ = true; //似乎多余。暂时放着
+      app.initGenDepthView();
+  }
 
   //sunguofei
   app.synthetic_RT=R_t;
