@@ -414,11 +414,6 @@ struct ImageView
         viewerDepth_->setWindowTitle ("Kinect Depth stream");
         viewerDepth_->setPosition (640, 0);
         //viewerColor_.setWindowTitle ("Kinect RGB stream");
-
-        //zhangxaochen:
-        //viewerGdepth_ = pcl::visualization::ImageViewer::Ptr(new pcl::visualization::ImageViewer);
-        //viewerGdepth_->setWindowTitle("model-generated-depth");
-        //viewerGdepth_->setPosition(1000, 100);
     }
   }
 
