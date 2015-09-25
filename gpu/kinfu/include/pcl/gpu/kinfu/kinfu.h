@@ -49,6 +49,9 @@
 #include <Eigen/Core>
 #include <vector>
 
+//sunguofei---contour cue
+#include <pcl/kdtree/kdtree_flann.h>
+
 // Focal lengths of RGB camera
 #define KINFU_DEFAULT_RGB_FOCAL_X 525.f
 #define KINFU_DEFAULT_RGB_FOCAL_Y 525.f

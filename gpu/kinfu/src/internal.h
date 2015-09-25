@@ -454,7 +454,7 @@ namespace pcl
       * \param[in] normal map
       * \param[out] mask of contours candidate
       */
-    void computeCandidate(const MapArr& src,ContourMask& dst,double focal_length);
+    void computeCandidate(const MapArr& src, ContourMask& dst,double focal_length);
 
     /** \brief impainting the depth map
      * \param[in] depth map

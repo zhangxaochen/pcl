@@ -241,6 +241,10 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
   {
       ContourMask normal_mask;
       ContourMask mask;
+      uchar* contour=(uchar*)malloc(640*480*sizeof(uchar));
+      uchar* candidate=(uchar*)malloc(640*480*sizeof(uchar));
+      float* normals=(float*)malloc(640*480*3*sizeof(float));
+      //std::vector<int> a(640*480);
       {
         //ScopeTime time(">>> Bilateral, pyr-down-all, create-maps-all");
         //depth_raw.copyTo(depths_curr[0]);
@@ -261,11 +265,42 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           //device::createNMap(vmaps_curr_[i], nmaps_curr_[i]);
           computeNormalsEigen (vmaps_curr_[i], nmaps_curr_[i]);
         }
-        device::computeCandidate(nmaps_curr_[0],normal_mask,525);
+        device::computeCandidate(nmaps_curr_[0],normal_mask,585);
         pcl::device::sync ();
       }
+
+      int c=640;
+      mask.download(contour,c);
+      normal_mask.download(candidate,c);
+      //nmaps_curr_[0].download(normals,c);
+
+      Mat Contour_map=Mat::zeros(480,640,CV_8U);
+      Mat N_map=Mat::zeros(480,640,CV_8U);
+      //Mat normal_map=Mat::zeros(480,640,CV_32FC3);
+      for (int i=0;i<480;++i)
+      {
+          for (int j=0;j<640;++j)
+          {
+              Contour_map.at<uchar>(i,j)=contour[i*640+j];
+              N_map.at<uchar>(i,j)=candidate[i*640+j];
+//               normal_map.at<Vector3f>(i,j)[0]=normals[i*640+j];
+//               normal_map.at<Vector3f>(i,j)[1]=normals[(i+1)*640+j];
+//               normal_map.at<Vector3f>(i,j)[2]=normals[(i+2)*640+j];
+              //cout<<a[i*640+j]<<" ";
+          }
+          //cout<<endl;
+      }
+      imshow("contours",Contour_map);
+      imshow("candidates",N_map);
+      //imshow("normals",normal_map);
+      waitKey(1);
+      free(contour);
+      free(candidate);
+
       //sunguofei---contour cue
       //visualization
+//       int tmp[640*480];
+//       normal_mask.download(tmp,640);
 
 //        Mat N_map=Mat::zeros(640,480,CV_8U);
 //        mask.download(N_map,8);
@@ -287,6 +322,23 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 //       waitKey(0);
 
       //build kd tree for vertex on the normal mask
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+
+      // Generate pointcloud data
+      cloud->width = 1000;
+      cloud->height = 1;
+      cloud->points.resize (cloud->width * cloud->height);
+
+      for (size_t i = 0; i < cloud->points.size (); ++i)
+      {
+          cloud->points[i].x = 1024.0f * rand () / (RAND_MAX + 1.0f);
+          cloud->points[i].y = 1024.0f * rand () / (RAND_MAX + 1.0f);
+          cloud->points[i].z = 1024.0f * rand () / (RAND_MAX + 1.0f);
+      }
+
+      pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+
+      kdtree.setInputCloud (cloud);
 
 
       //can't perform more on first frame
