@@ -201,15 +201,14 @@ namespace pcl
 	}
 
     __global__ void
-    computeCandidateKernel(PtrStepSz<float> src,PtrStepSz<_uchar> dst,double focal_length,double thresh)
+    computeCandidateKernel(PtrStepSz<float> nmap,PtrStepSz<float> vmap,float t_x,float t_y,float t_z,PtrStepSz<_uchar> dst,double thresh)
     {
         int x = blockIdx.x * blockDim.x + threadIdx.x;
 		int y = blockIdx.y * blockDim.y + threadIdx.y;
         if (x<dst.cols && y<dst.rows)
         {
-            double cx=dst.cols/2,cy=dst.rows/2;
-            double x1=src.ptr(y)[x],y1=src.ptr(y+dst.rows)[x],z1=src.ptr(y+2*dst.rows)[x];
-            double x2=cx-x,y2=cy-y,z2=focal_length;
+            double x1=nmap.ptr(y)[x],y1=nmap.ptr(y+dst.rows)[x],z1=nmap.ptr(y+2*dst.rows)[x];
+            double x2=t_x-vmap.ptr(y)[x],y2=t_y-vmap.ptr(y)[x+dst.rows],z2=t_z-vmap.ptr(y+2*dst.rows)[x];
             double mod1=sqrt(x1*x1+y1*y1+z1*z1),mod2=sqrt(x2*x2+y2*y2+z2*z2);
             if (mod1>1e-3&&mod2>1e-3)
             {
@@ -221,7 +220,7 @@ namespace pcl
             }
             else
             {
-                dst.ptr(y)[x]=128;
+                dst.ptr(y)[x]=255;
             }
         }
     }
@@ -319,13 +318,13 @@ void pcl::device::computeContours(const DepthMap& src,ContourMask& dst)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void pcl::device::computeCandidate(const MapArr& src,ContourMask& dst,double focal_length)
+void pcl::device::computeCandidate(const MapArr& nmap, const MapArr& vmap, float t_x,float t_y,float t_z,ContourMask& dst,double thresh)
 {
-  dst.create(src.rows ()/3, src.cols ());
+  dst.create(nmap.rows ()/3, nmap.cols ());
   dim3 block (32, 8);
-  dim3 grid (divUp (src.cols (), block.x), divUp (src.rows (), block.y));
+  dim3 grid (divUp (nmap.cols (), block.x), divUp (nmap.rows (), block.y));
 
-  computeCandidateKernel<<<grid, block>>>(src, dst, focal_length, 0.4);
+  computeCandidateKernel<<<grid, block>>>(nmap,vmap, t_x,t_y,t_z, dst, thresh);
 
   cudaSafeCall ( cudaGetLastError () );
 }

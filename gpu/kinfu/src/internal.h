@@ -452,9 +452,10 @@ namespace pcl
 
     /** \brief Compute contours candidate in the synthetic map
       * \param[in] normal map
+      * \param[in] vertex map
       * \param[out] mask of contours candidate
       */
-    void computeCandidate(const MapArr& src, ContourMask& dst,double focal_length);
+    void computeCandidate(const MapArr& nmap,const MapArr& vmap,float t_x,float t_y,float t_z, ContourMask& dst,double focal_length);
 
     /** \brief impainting the depth map
      * \param[in] depth map

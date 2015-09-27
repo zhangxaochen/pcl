@@ -244,6 +244,13 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       uchar* contour=(uchar*)malloc(640*480*sizeof(uchar));
       uchar* candidate=(uchar*)malloc(640*480*sizeof(uchar));
       float* normals=(float*)malloc(640*480*3*sizeof(float));
+      float position_camera_x,position_camera_y,position_camera_z;
+      if (global_time_!=0)
+      {
+          position_camera_x=tvecs_[global_time_-1][0];
+          position_camera_y=tvecs_[global_time_-1][1];
+          position_camera_z=tvecs_[global_time_-1][2];
+      }
       //std::vector<int> a(640*480);
       {
         //ScopeTime time(">>> Bilateral, pyr-down-all, create-maps-all");
@@ -254,7 +261,10 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           device::truncateDepth(depths_curr_[0], max_icp_distance_);
 
         //sunguofei---contour cue
-        device::computeContours(depths_curr_[0],mask);
+        if (global_time_!=0)
+        {
+            device::computeContours(depths_curr_[0],mask);
+        }
 
         for (int i = 1; i < LEVELS; ++i)
           device::pyrDown (depths_curr_[i-1], depths_curr_[i]);
@@ -265,10 +275,14 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           //device::createNMap(vmaps_curr_[i], nmaps_curr_[i]);
           computeNormalsEigen (vmaps_curr_[i], nmaps_curr_[i]);
         }
-        device::computeCandidate(nmaps_curr_[0],normal_mask,585);
+        if (global_time_!=0)
+        {
+            device::computeCandidate(nmaps_g_prev_[0],vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.25);
+        }
         pcl::device::sync ();
       }
-
+      if (global_time_!=0)
+      {
       int c=640;
       mask.download(contour,c);
       normal_mask.download(candidate,c);
@@ -296,6 +310,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       waitKey(1);
       free(contour);
       free(candidate);
+      }
 
       //sunguofei---contour cue
       //visualization
