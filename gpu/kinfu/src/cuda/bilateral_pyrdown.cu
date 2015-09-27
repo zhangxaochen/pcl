@@ -220,7 +220,7 @@ namespace pcl
             }
             else
             {
-                dst.ptr(y)[x]=255;
+                dst.ptr(y)[x]=0;
             }
         }
     }
