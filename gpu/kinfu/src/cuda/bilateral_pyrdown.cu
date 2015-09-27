@@ -226,7 +226,7 @@ namespace pcl
     }
 
     __global__ void
-    impaintKernel(PtrStepSz<ushort> src,PtrStepSz<ushort> dst)
+    inpaintKernel(PtrStepSz<ushort> src,PtrStepSz<ushort> dst)
     {
         int x=blockIdx.x*blockDim.x+threadIdx.x;
         if(x<dst.rows)
@@ -330,13 +330,13 @@ void pcl::device::computeCandidate(const MapArr& nmap, const MapArr& vmap, float
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void pcl::device::impaint(const DepthMap& src,DepthMap dst)
+void pcl::device::inpaint(const DepthMap& src,DepthMap& dst)
 {
-  dst.create(src.rows(),src.cols());
-  dim3 block (32);
-  dim3 grid (divUp (src.rows (), block.x));
+  dst.create(src.rows(), src.cols());
+  dim3 block (32, 8);
+  dim3 grid (divUp (src.cols (), block.x), divUp (src.rows (), block.y));
 
-  impaintKernel<<<grid, block>>>(src, dst);
+  inpaintKernel<<<grid, block>>>(src, dst);
 
   cudaSafeCall ( cudaGetLastError () );
 }

@@ -457,11 +457,11 @@ namespace pcl
       */
     void computeCandidate(const MapArr& nmap,const MapArr& vmap,float t_x,float t_y,float t_z, ContourMask& dst,double focal_length);
 
-    /** \brief impainting the depth map
+    /** \brief inpainting the depth map
      * \param[in] depth map
-     * \param[out] impainted depth map
+     * \param[out] inpainted depth map
      */
-    void impaint(const DepthMap& src,DepthMap dst);
+    void inpaint(const DepthMap& src,DepthMap& dst);
   }
 }
 

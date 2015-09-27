@@ -78,6 +78,7 @@
   #include <opencv2/imgproc/imgproc.hpp>
 //zhangxaochen:
 using namespace cv;
+#include "contour_cue_impl.h"
 //#include "video_recorder.h"
 #endif
 typedef pcl::ScopeTime ScopeTimeT;
@@ -1203,6 +1204,10 @@ struct KinFuApp
             Mat dmat8u;
             dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
             imshow("dmat8u", dmat8u);
+
+            Mat inpDmat8u = zc::inpaint<uchar>(dmat8u);
+            imshow("inpDmat8u", inpDmat8u);
+
             int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
             if(key==27) //Esc
                 break;
