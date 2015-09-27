@@ -73,7 +73,7 @@ if (build)
 
     PCL_ADD_LIBRARY("${LIB_NAME}" "${SUBSYS_NAME}" ${srcs} ${incs} ${cuda} ${cuda_objs})
     target_link_libraries("${LIB_NAME}" pcl_gpu_containers)
-    target_link_libraries("${LIB_NAME}" pcl_kdtree)
+    target_link_libraries("${LIB_NAME}" pcl_kdtree ${OpenCV_LIBS})
 
 
     set(EXT_DEPS "")

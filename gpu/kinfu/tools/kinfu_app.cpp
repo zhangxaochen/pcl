@@ -1591,7 +1591,7 @@ main (int argc, char* argv[])
 
   if(pc::find_switch(argc, argv, "--gen-depth") || pc::find_switch(argc, argv, "-gd")){
       app.show_gdepth_ = true; //似乎多余。暂时放着
-      app.initGenDepthView(viz_);
+      app.initGenDepthView(visualization);
   }
 
   //sunguofei
