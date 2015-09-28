@@ -252,6 +252,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           position_camera_z=tvecs_[global_time_-1][2];
       }
       //std::vector<int> a(640*480);
+      Mat contMskHost;
       {
         //ScopeTime time(">>> Bilateral, pyr-down-all, create-maps-all");
         //depth_raw.copyTo(depths_curr[0]);
@@ -270,6 +271,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
         depths_curr_[0].upload(inpBilatDmat.data, hostStep, bilatDmat.rows, bilatDmat.cols);
         zc::computeContours(depths_curr_[0], contMsk_);
+        contMskHost = Mat(contMsk_.rows(), contMsk_.cols(), CV_8UC1);
+        contMsk_.download(contMskHost.data, contMskHost.cols * contMskHost.elemSize());
 
         //sunguofei---contour cue
         if (global_time_!=0)
@@ -315,7 +318,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           }
           //cout<<endl;
       }
-      Contour_map.setTo(180, contMsk_ != 0);
+      Contour_map.setTo(128, contMskHost != 0);
       imshow("contours",Contour_map);
       imshow("candidates",N_map);
       //imshow("normals",normal_map);
