@@ -49,6 +49,9 @@
 #include <Eigen/Core>
 #include <vector>
 
+//zhangxaochen:
+#include "contour_cue_impl.h"
+
 //sunguofei---contour cue
 #include <pcl/kdtree/kdtree_flann.h>
 
@@ -203,6 +206,11 @@ namespace pcl
         /** \brief Disables ICP forever */
         void disableIcp();
 
+        //zhangxaochen:
+        zc::MaskMap getContMask(){
+            return contMsk_;
+        }
+
       private:
         
         /** \brief Number of pyramid levels */
@@ -302,6 +310,9 @@ namespace pcl
         //sunguofei
         Eigen::Matrix3f d_R;
         Eigen::Vector3f d_t;
+
+        //zhangxaochen:
+        zc::MaskMap contMsk_;
 
 public:
 EIGEN_MAKE_ALIGNED_OPERATOR_NEW

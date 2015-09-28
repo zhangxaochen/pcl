@@ -261,6 +261,17 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         if (max_icp_distance_ > 0)
           device::truncateDepth(depths_curr_[0], max_icp_distance_);
 
+        Mat bilatDmat(depth_raw.rows(), depth_raw.cols(), CV_16UC1);
+        size_t hostStep = bilatDmat.cols * bilatDmat.elemSize();
+        depths_curr_[0].download(bilatDmat.data, hostStep);
+        Mat inpBilatDmat = zc::inpaintCpu<unsigned short>(bilatDmat);
+        Mat inpBilatDmat8u;
+        inpBilatDmat.convertTo(inpBilatDmat8u, CV_8UC1, 1. * UCHAR_MAX / 1e4);
+        imshow("inpBilatDmat8u", inpBilatDmat8u);
+
+        depths_curr_[0].upload(inpBilatDmat.data, hostStep, bilatDmat.rows, bilatDmat.cols);
+        zc::computeContours(depths_curr_[0], contMsk_);
+
         //sunguofei---contour cue
         if (global_time_!=0)
         {
@@ -324,6 +335,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           }
           //cout<<endl;
       }
+      Contour_map.setTo(180, contMsk_ != 0);
       imshow("contours",Contour_map);
       imshow("candidates",N_map);
       imshow("normals",normal_map);

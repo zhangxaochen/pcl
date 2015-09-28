@@ -3,18 +3,22 @@
 
 #include <iostream>
 #include <opencv2/opencv.hpp>
-#include <pcl/pcl_macros.h>
+//#include <pcl/pcl_macros.h> //与 .cu 冲突 "error C2375: 'log2f' : redefinition; different linkage"
+#include <pcl/pcl_exports.h>
+#include "internal.h"
+// #include <pcl/gpu/containers/device_array.h>
 
 using namespace std;
-using namespace cv;
 
 namespace zc{
+    using namespace cv;
+
 //@author zhangxaochen
-//@brief implementing the inpainting algorithm in paper *cvpr2015-contour-cue*
-//@param src, input src depth map(opencv-Mat)
+//@brief implementing the INPAINTING algorithm in paper *cvpr2015-contour-cue*
+//@param[in] src, input src depth map(opencv-Mat)
 //@return dst, inpainted depth map
 template<typename T> 
-PCL_EXPORTS Mat inpaint(const Mat& src){
+PCL_EXPORTS Mat inpaintCpu(const Mat& src){
     //CV_Assert(src.depth() == CV_16UC1); //不要。因为 8u / 16u 都可能
     Mat dst = src.clone(); //copy data true
     for(size_t i = 0; i < dst.rows; i++){
@@ -60,7 +64,31 @@ PCL_EXPORTS Mat inpaint(const Mat& src){
         }//for-j
     }//for-i
     return dst;
-}//inpaint
+}//inpaintCpu
+
+
+using pcl::device::DepthMap;
+using pcl::device::MapArr;
+using pcl::gpu::DeviceArray2D;
+using pcl::gpu::divUp;        
+using pcl::gpu::PtrSz;
+using pcl::gpu::PtrStep;
+using pcl::gpu::PtrStepSz;
+
+typedef unsigned short ushort;
+typedef unsigned char uchar;
+typedef DeviceArray2D<uchar> MaskMap;
+
+//void bilateralFilter (const DepthMap& src, DepthMap& dst);
+
+//@author zhangxaochen
+//@brief implementing the CONTOUR-DETECTION algorithm in paper *cvpr2015-contour-cue*
+//@param[in] src, depth map on gpu, type==ushort
+//@param[out] dst, mask map on gpu, type==uchar
+//@param[in] thresh, discontinunity threshold δ in paper, in (mm)
+void computeContours(const DepthMap& src, MaskMap& dst, int thresh = 50);
+
+void inpaintGpu(const DepthMap& src, DepthMap& dst);
 
 }//namespace zc
 
