@@ -243,7 +243,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       ContourMask mask;
       uchar* contour=(uchar*)malloc(640*480*sizeof(uchar));
       uchar* candidate=(uchar*)malloc(640*480*sizeof(uchar));
-      float* normals=(float*)malloc(640*480*3*sizeof(float));
+      vector<float> normals(640*480*3);
+      vector<float> vertexes(640*480*3);
       float position_camera_x,position_camera_y,position_camera_z;
       if (global_time_!=0)
       {
@@ -281,79 +282,74 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         }
         pcl::device::sync ();
       }
+      pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
       if (global_time_!=0)
       {
       int c=640;
       mask.download(contour,c);
       normal_mask.download(candidate,c);
-      //nmaps_curr_[0].download(normals,c);
+      nmaps_g_prev_[0].download(normals,c);
+      vmaps_g_prev_[0].download(vertexes,c);
+      //根据得到的数据，将contour candidate取出来，构建kd tree
+      vector<float> contour_candidate;
+      vector<float> contour_candidate_normal;
+      for (int i=0;i<vertexes.size()/3;++i)
+      {
+          if (candidate[i]==255)
+          {
+              contour_candidate.push_back(vertexes[i]);
+              contour_candidate.push_back(vertexes[i+vertexes.size()/3]);
+              contour_candidate.push_back(vertexes[i+2*vertexes.size()/3]);
+
+
+              contour_candidate_normal.push_back(normals[i]);
+              contour_candidate_normal.push_back(normals[i+vertexes.size()/3]);
+              contour_candidate_normal.push_back(normals[i+2*vertexes.size()/3]);
+          }
+      }
 
       Mat Contour_map=Mat::zeros(480,640,CV_8U);
       Mat N_map=Mat::zeros(480,640,CV_8U);
-      //Mat normal_map=Mat::zeros(480,640,CV_32FC3);
+      Mat normal_map=Mat::zeros(480,640,CV_32FC3);
       for (int i=0;i<480;++i)
       {
           for (int j=0;j<640;++j)
           {
               Contour_map.at<uchar>(i,j)=contour[i*640+j];
               N_map.at<uchar>(i,j)=candidate[i*640+j];
-//               normal_map.at<Vector3f>(i,j)[0]=normals[i*640+j];
-//               normal_map.at<Vector3f>(i,j)[1]=normals[(i+1)*640+j];
-//               normal_map.at<Vector3f>(i,j)[2]=normals[(i+2)*640+j];
+              normal_map.at<Vector3f>(i,j)[0]=normals[i*640+j];
+              normal_map.at<Vector3f>(i,j)[1]=normals[(i+480)*640+j];
+              normal_map.at<Vector3f>(i,j)[2]=normals[(i+480*2)*640+j];
               //cout<<a[i*640+j]<<" ";
           }
           //cout<<endl;
       }
       imshow("contours",Contour_map);
       imshow("candidates",N_map);
-      //imshow("normals",normal_map);
+      imshow("normals",normal_map);
       waitKey(1);
       free(contour);
       free(candidate);
-      }
 
-      //sunguofei---contour cue
-      //visualization
-//       int tmp[640*480];
-//       normal_mask.download(tmp,640);
-
-//        Mat N_map=Mat::zeros(640,480,CV_8U);
-//        mask.download(N_map,8);
-
-//       N_map=normal_mask.data_();
-//       Mat Contour_map=Mat::zeros(640,480,CV_8U);
-//       Contour_map=mask.data_();
-//       for (int i=0;i<N_map.rows;++i)
-//       {
-//           for (int j=0;j<N_map.cols;++j)
-//           {
-//               int a=normal_mask.ptr(i)[j];
-//               N_map.at<uchar>(i,j)=normal_mask.ptr(i)[j];
-//               Contour_map.at<uchar>(i,j)=mask.ptr(i)[j];
-//           }
-//       }
-//       imshow("contour candidate",N_map);
-//       imshow("contour candidate",Contour_map);
-//       waitKey(0);
 
       //build kd tree for vertex on the normal mask
       pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
 
       // Generate pointcloud data
-      cloud->width = 1000;
+      cloud->width = contour_candidate.size()/3;
       cloud->height = 1;
       cloud->points.resize (cloud->width * cloud->height);
 
       for (size_t i = 0; i < cloud->points.size (); ++i)
       {
-          cloud->points[i].x = 1024.0f * rand () / (RAND_MAX + 1.0f);
-          cloud->points[i].y = 1024.0f * rand () / (RAND_MAX + 1.0f);
-          cloud->points[i].z = 1024.0f * rand () / (RAND_MAX + 1.0f);
+          cloud->points[i].x = contour_candidate[i*3];
+          cloud->points[i].y = contour_candidate[i*3+1];
+          cloud->points[i].z = contour_candidate[i*3+2];
       }
 
-      pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
 
       kdtree.setInputCloud (cloud);
+      }
 
 
       //can't perform more on first frame

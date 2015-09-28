@@ -453,9 +453,11 @@ namespace pcl
     /** \brief Compute contours candidate in the synthetic map
       * \param[in] normal map
       * \param[in] vertex map
+      * \param[in] camera position x y z
       * \param[out] mask of contours candidate
+      * \param[in] threshold determining whether it is a contour candidate
       */
-    void computeCandidate(const MapArr& nmap,const MapArr& vmap,float t_x,float t_y,float t_z, ContourMask& dst,double focal_length);
+    void computeCandidate(const MapArr& nmap,const MapArr& vmap,float t_x,float t_y,float t_z, ContourMask& dst,double thresh);
 
     /** \brief inpainting the depth map
      * \param[in] depth map

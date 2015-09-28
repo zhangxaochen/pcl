@@ -328,7 +328,7 @@ pcl::device::estimateCombined (const Mat33& Rcurr, const float3& tcurr,
                                const Mat33& Rprev_inv, const float3& tprev, const Intr& intr,
                                const MapArr& vmap_g_prev, const MapArr& nmap_g_prev, 
                                float distThres, float angleThres,
-                               DeviceArray2D<float_type>& gbuf, DeviceArray<float_type>& mbuf, 
+                               DeviceArray2D<float_type>& gbuf, DeviceArray<float_type>& mbuf,
                                float_type* matrixA_host, float_type* vectorB_host)
 {
   int cols = vmap_curr.cols ();

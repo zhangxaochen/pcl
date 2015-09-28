@@ -184,7 +184,7 @@ namespace pcl
 		if (x < src.cols && y < src.rows)
         {
             dst.ptr(y)[x]=0;
-            int x_left=max(0,x-1),x_right=min(x+1,src.cols),y_top=max(0,y-1),y_down=min(y+1,src.cols);
+            int x_left=max(0,x-1),x_right=min(x+1,src.cols-1),y_top=max(0,y-1),y_down=min(y+1,src.cols-1);
             int val=src.ptr(y)[x];
             int d[8];
             d[0]=src.ptr(y)[x_left];d[1]=src.ptr(y_top)[x_left];d[2]=src.ptr(y_top)[x];d[3]=src.ptr(y_top)[x_right];
@@ -193,7 +193,7 @@ namespace pcl
             {
                 if (val-d[i]>thresh)
                 {
-                    dst.ptr(y)[x]=255;
+                    dst.ptr(y)[x]=255;//如果满足轮廓要求，则mask值为255，否则为0
                     break;
                 }
             }
@@ -207,20 +207,15 @@ namespace pcl
 		int y = blockIdx.y * blockDim.y + threadIdx.y;
         if (x<dst.cols && y<dst.rows)
         {
+            dst.ptr(y)[x]=0;
             double x1=nmap.ptr(y)[x],y1=nmap.ptr(y+dst.rows)[x],z1=nmap.ptr(y+2*dst.rows)[x];
-            double x2=t_x-vmap.ptr(y)[x],y2=t_y-vmap.ptr(y)[x+dst.rows],z2=t_z-vmap.ptr(y+2*dst.rows)[x];
+            double x2=t_x-vmap.ptr(y)[x],y2=t_y-vmap.ptr(y+dst.rows)[x],z2=t_z-vmap.ptr(y+2*dst.rows)[x];
             double mod1=sqrt(x1*x1+y1*y1+z1*z1),mod2=sqrt(x2*x2+y2*y2+z2*z2);
             if (mod1>1e-3&&mod2>1e-3)
             {
                 double res=(x1*x2+y1*y2+z1*z2)/(mod1*mod2);
                 if (abs(res)<thresh)
-                    dst.ptr(y)[x]=255;
-                else
-                    dst.ptr(y)[x]=0;
-            }
-            else
-            {
-                dst.ptr(y)[x]=0;
+                    dst.ptr(y)[x]=255;//如果满足轮廓要求，则mask值为255，否则为0
             }
         }
     }
