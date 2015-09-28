@@ -177,11 +177,11 @@ namespace pcl
 
     __global__ void
     computeContoursKernel(PtrStepSz<ushort> src, PtrStepSz<_uchar> dst, int thresh)
-	{
-		int x = blockIdx.x * blockDim.x + threadIdx.x;
-		int y = blockIdx.y * blockDim.y + threadIdx.y;
-        
-		if (x < src.cols && y < src.rows)
+    {
+        int x = blockIdx.x * blockDim.x + threadIdx.x;
+        int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+        if (x < src.cols && y < src.rows)
         {
             dst.ptr(y)[x]=0;
             int x_left=max(0,x-1),x_right=min(x+1,src.cols),y_top=max(0,y-1),y_down=min(y+1,src.cols);

@@ -77,7 +77,7 @@
   #include <opencv2/highgui/highgui.hpp>
   #include <opencv2/imgproc/imgproc.hpp>
 //zhangxaochen:
-using namespace cv;
+//using namespace cv;
 #include "contour_cue_impl.h"
 //#include "video_recorder.h"
 #endif
@@ -1200,13 +1200,23 @@ struct KinFuApp
             this->csvRtCurrRow_ = rt;
 
             printf("%s\n", fn.c_str());
+
+            using namespace cv;
             Mat dmat = imread(fn, IMREAD_UNCHANGED);
             Mat dmat8u;
             dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
-            imshow("dmat8u", dmat8u);
+            putText(dmat8u, "dmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
+            //imshow("dmat8u", dmat8u);
 
-            Mat inpDmat8u = zc::inpaint<uchar>(dmat8u);
-            imshow("inpDmat8u", inpDmat8u);
+            Mat inpDmat = zc::inpaintCpu<ushort>(dmat),
+                inpDmat8u;
+            inpDmat.convertTo(inpDmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+            putText(inpDmat8u, "inpDmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
+            //imshow("inpDmat8u", inpDmat8u);
+            //dmat8u.push_back(inpDmat8u); //==vconcat
+            hconcat(dmat8u, inpDmat8u, dmat8u);
+            pyrDown(dmat8u, dmat8u);
+            imshow("dmat8u", dmat8u);
 
             int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
             if(key==27) //Esc
@@ -1222,6 +1232,12 @@ struct KinFuApp
             try { this->execute (depth_, rgb24_, has_data); }
             catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
             catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
+
+            zc::MaskMap contMskDevice = kinfu_.getContMask();
+            Mat contMskHost(contMskDevice.rows(), contMskDevice.cols(), CV_8UC1);
+            //contMskDevice.download(contMskHost.data, contMskDevice.step()); //step -> 1024, 应为 640. 不知原因
+            contMskDevice.download(contMskHost.data, contMskDevice.cols());
+            imshow("contMskHost", contMskHost);
 
         }//for-pngFnames_
     }//else //this->png_source_ == true
