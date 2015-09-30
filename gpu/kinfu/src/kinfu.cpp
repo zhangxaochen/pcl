@@ -55,6 +55,9 @@
 using namespace cv;
 #endif
 
+//zhangxaochen:
+#include "zcUtility.h"
+
 using namespace std;
 using namespace pcl::device;
 using namespace pcl::gpu;
