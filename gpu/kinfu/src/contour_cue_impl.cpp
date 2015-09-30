@@ -1,4 +1,5 @@
 #include "contour_cue_impl.h"
+#include "zcUtility.h"
 
 using namespace pcl;
 
