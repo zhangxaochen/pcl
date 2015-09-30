@@ -191,7 +191,7 @@ namespace pcl
             d[4]=src.ptr(y)[x_right];d[5]=src.ptr(y_down)[x_right];d[6]=src.ptr(y_down)[x];d[7]=src.ptr(y_down)[x_left];
             for(int i=0;i<8;++i)
             {
-                if (val-d[i]>thresh)
+                if (d[i]-val>thresh)
                 {
                     dst.ptr(y)[x]=255;//如果满足轮廓要求，则mask值为255，否则为0
                     break;

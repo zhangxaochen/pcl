@@ -245,6 +245,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       uchar* candidate=(uchar*)malloc(640*480*sizeof(uchar));
       vector<float> normals(640*480*3);
       vector<float> vertexes(640*480*3);
+      vector<float> vertexes_curr(640*480*3);
       float position_camera_x,position_camera_y,position_camera_z;
       if (global_time_!=0)
       {
@@ -292,11 +293,17 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         }
         if (global_time_!=0)
         {
-            device::computeCandidate(nmaps_g_prev_[0],vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.25);
+            device::computeCandidate(nmaps_g_prev_[0],vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.26);
         }
         pcl::device::sync ();
       }
+
+      //build kd tree for vertex on the normal mask
       pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+      vector<float> contour_candidate;
+      vector<float> contour_candidate_normal;
+      vector<float> contour_curr;
       if (global_time_!=0)
       {
       int c=640;
@@ -304,9 +311,9 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       normal_mask.download(candidate,c);
       nmaps_g_prev_[0].download(normals,c);
       vmaps_g_prev_[0].download(vertexes,c);
-      //根据得到的数据，将contour candidate取出来，构建kd tree
-      vector<float> contour_candidate;
-      vector<float> contour_candidate_normal;
+      vmaps_curr_[0].download(vertexes_curr,c);
+
+      //根据得到的数据，将contour candidate取出来，用来构建kd tree
       for (int i=0;i<vertexes.size()/3;++i)
       {
           if (candidate[i]==255)
@@ -319,6 +326,15 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
               contour_candidate_normal.push_back(normals[i]);
               contour_candidate_normal.push_back(normals[i+vertexes.size()/3]);
               contour_candidate_normal.push_back(normals[i+2*vertexes.size()/3]);
+          }
+      }
+      for (int i=0;i<vertexes_curr.size()/3;++i)
+      {
+          if(contour[i]==255)
+          {
+              contour_curr.push_back(vertexes_curr[i]);
+              contour_curr.push_back(vertexes_curr[i+vertexes_curr.size()/3]);
+              contour_curr.push_back(vertexes_curr[i+2*vertexes_curr.size()/3]);
           }
       }
 
@@ -347,8 +363,6 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       free(candidate);
 
 
-      //build kd tree for vertex on the normal mask
-      pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
 
       // Generate pointcloud data
       cloud->width = contour_candidate.size()/3;
@@ -364,6 +378,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
 
       kdtree.setInputCloud (cloud);
+      
       }
 
 
@@ -382,6 +397,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             d_R = init_Rcam*init_Rcam_1.inverse();
             d_t = -d_R*init_tcam_1+init_tcam;
         }
+
 
         Mat33&  device_Rcam = device_cast<Mat33> (init_Rcam);
         float3& device_tcam = device_cast<float3>(init_tcam);
@@ -476,6 +492,50 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             //ma.download(cpu);
             //cv::imshow(names[level_index] + string(" --- coresp white == -1"), cpu == -1);
     #else
+            //sunguofei---contour cue
+            vector<float> cores_v_curr;
+            vector<float> cores_v_prev;
+            vector<float> cores_n_prev;
+            //对当前深度图中的contour上的点寻找对应点，并按顺序存起来
+            for (int i=0;i<contour_curr.size()/3;++i)
+            {
+                pcl::PointXYZ searchpoint;
+                //每个点是在当前相机坐标系下的，根据R_curr和t_curr，将他们转换到世界坐标系下（因为上一帧模型得到的点都是在世界坐标系下的）
+                Vector3f point;
+                point(0,0)=contour_curr[i*3];
+                point(1,0)=contour_curr[i*3+1];
+                point(2,0)=contour_curr[i*3+2];
+                point=Rcurr*point+tcurr;
+                searchpoint.x=point(0,0);
+                searchpoint.y=point(1,0);
+                searchpoint.z=point(2,0);
+
+                vector<int> pointIdxSearch(1);
+                vector<float> pointSquaredDistance(1);
+
+                float radius = 0.1;
+
+                if ( kdtree.nearestKSearch (searchpoint, 1, pointIdxSearch, pointSquaredDistance) > 0 )
+                {
+                    if (pointSquaredDistance[0]<=radius*radius)
+                    {
+                        //找到满足要求的对应点，将他们存在vector中，下标相同的点是一组对应点
+                        cores_v_curr.push_back(contour_curr[i*3]);
+                        cores_v_curr.push_back(contour_curr[i*3+1]);
+                        cores_v_curr.push_back(contour_curr[i*3+2]);
+
+                        cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].x);
+                        cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].y);
+                        cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].z);
+
+                        cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3 ]);
+                        cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3+1 ]);
+                        cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3+2 ]);
+                    }
+                }
+            }
+            //找到对应关系之后，将其传入下边函数中，在里边进行计算
+
             estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
                               vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
     #endif
