@@ -14,10 +14,69 @@
 
 namespace zc{
 
+//@brief given *inOut* as input, inpaint the holes of *inOut* on GPU
+//@param inOut, both input & output storage
+template<typename T>
+__global__ void 
+inpaintGpuKernel(PtrStepSz<T> inOut){
+    int bid = blockIdx.x + blockIdx.y * gridDim.x;
+    int tid = bid * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x; //tid 计算对不对呢？未测试
+    //一个 tid 对应*一行*像素：
+    if(tid > inOut.rows)
+        return;
+    
+    T *row = inOut.ptr(tid);
+    //左右有效-无效值边界值：
+    T lValidBorderVal = 0,
+        rValidBorderVal = 0;
+    //对应下标：
+    int lbIdx = -1,
+        rbIdx = -1;
+
+    for(size_t j = 0; j < inOut.cols - 1; j++){
+        if(row[j] != 0 && row[j+1] == 0){ //j有效，j+1无效
+            lbIdx = j;
+            lValidBorderVal = row[j];
+
+            //重置 rValidBorderVal： (其实未用)
+            rValidBorderVal = 0;
+        }
+        else if(row[j] == 0 && row[j+1] != 0){ //j无效，j+1有效
+            rbIdx = j+1;
+            rValidBorderVal = row[j+1];
+
+            //右边界触发修补, 向左回溯 (idx=0 极左位置无效，也能正确处理)
+            T inpaintVal = max(int(lValidBorderVal), rValidBorderVal);
+            for(int k = j; k > lbIdx; k--){
+                row[k] = inpaintVal;
+            }
+
+            //重置 lValidBorderVal: (有用，下面判定)
+            lValidBorderVal = 0;
+        }
+
+        if(j+1 == inOut.cols - 1 && row[j+1] == 0 //dst.cols-1 极右位置，若无效，特别处理
+            && lValidBorderVal != 0) //若 ==0，且极右无效，说明整行都为零，不处理
+        {
+            //此时必存在已更新但未使用的 lValidBorderVal：
+            T inpaintVal = lValidBorderVal; //== max(lValidBorderVal, rValidBorderVal); since rValidBorderVal==0
+            for(int k = j+1; k > lbIdx; k--){
+                row[k] = inpaintVal;
+            }
+        }
+    }//for-j
+}//inpaintGpuKernel
+
 void inpaintGpu(const DepthMap& src, DepthMap& dst){
     dst.create(src.rows(), src.cols());
+    src.copyTo(dst);
 
+    dim3 block(480, 1);
+    dim3 grid = divUp(src.rows(), block.x);
 
+    inpaintGpuKernel<ushort><<<grid, block>>>(dst);
+
+    cudaSafeCall(cudaGetLastError());
 }//inpaintGpu
 
 __global__ void

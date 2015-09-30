@@ -263,15 +263,11 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         if (max_icp_distance_ > 0)
           device::truncateDepth(depths_curr_[0], max_icp_distance_);
 
-        Mat bilatDmat(depth_raw.rows(), depth_raw.cols(), CV_16UC1);
-        size_t hostStep = bilatDmat.cols * bilatDmat.elemSize();
-        depths_curr_[0].download(bilatDmat.data, hostStep);
-        Mat inpBilatDmat = zc::inpaintCpu<unsigned short>(bilatDmat);
-        Mat inpBilatDmat8u;
-        inpBilatDmat.convertTo(inpBilatDmat8u, CV_8UC1, 1. * UCHAR_MAX / 1e4);
-        imshow("inpBilatDmat8u", inpBilatDmat8u);
+        //zhangxaochen: test inpaint impl. both CPU & GPU version
+        bool debugDraw = true;
+        zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw);
+        zc::inpaintGpu(depths_curr_[0], depths_curr_[0]);
 
-        depths_curr_[0].upload(inpBilatDmat.data, hostStep, bilatDmat.rows, bilatDmat.cols);
         zc::computeContours(depths_curr_[0], contMsk_);
         contMskHost = Mat(contMsk_.rows(), contMsk_.cols(), CV_8UC1);
         contMsk_.download(contMskHost.data, contMskHost.cols * contMskHost.elemSize());
