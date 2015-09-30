@@ -46,15 +46,23 @@ inpaintGpuKernel(PtrStepSz<T> inOut){
             rValidBorderVal = row[j+1];
 
             //右边界触发修补, 向左回溯 (idx=0 极左位置无效，也能正确处理)
-            T inpaintVal = max(int(lValidBorderVal), rValidBorderVal);
-            for(int k = j; k > lbIdx; k--){
-                row[k] = inpaintVal;
+            //INP_V2 逻辑已改： 2015-9-30 11:28:50
+#if INP_V2  //v2, 单边无效时*不*修补
+            if (lValidBorderVal != 0){
+#endif  //INP_V2
+                T inpaintVal = max(int(lValidBorderVal), rValidBorderVal);
+                for(int k = j; k > lbIdx; k--){
+                    row[k] = inpaintVal;
+                }
+#if INP_V2
             }
+#endif  //INP_V2
 
             //重置 lValidBorderVal: (有用，下面判定)
             lValidBorderVal = 0;
         }
 
+#if INP_V1  //v1, 左/右单边无效也修补
         if(j+1 == inOut.cols - 1 && row[j+1] == 0 //dst.cols-1 极右位置，若无效，特别处理
             && lValidBorderVal != 0) //若 ==0，且极右无效，说明整行都为零，不处理
         {
@@ -64,6 +72,7 @@ inpaintGpuKernel(PtrStepSz<T> inOut){
                 row[k] = inpaintVal;
             }
         }
+#endif  //v1, 左/右单边无效也修补
     }//for-j
 }//inpaintGpuKernel
 
