@@ -4,7 +4,6 @@
 #include <iostream>
 #include <opencv2/opencv.hpp>
 //#include <pcl/pcl_macros.h> //”Î .cu ≥ÂÕª "error C2375: 'log2f' : redefinition; different linkage"
-#include <pcl/common/time.h>
 #include <pcl/pcl_exports.h>
 
 #include "internal.h"
@@ -114,29 +113,6 @@ void computeContours(const DepthMap& src, MaskMap& dst, int thresh = 50);
 
 //@brief similar to *inpaintCpu*, but not a func. template
 void inpaintGpu(const DepthMap& src, DepthMap& dst);
-
-namespace test{
-void testInpaintImplCpuAndGpu(const DepthMap &src, bool debugDraw = false);
-
-}//namespace test
-
-class ScopeTimeMicroSec : public StopWatch{
-    std::string title_;
-public:
-    ScopeTimeMicroSec(const char *title=""):
-      title_(title){}
-
-    ~ScopeTimeMicroSec(){
-        double val = this->getTimeMicros();
-        std::cerr << title_ << " took " << val << " micro seconds.\n";
-    }
-
-    //@brief return execution time in micro-seconds
-    //@issue&fix move function body to .cpp file to avoid http://stackoverflow.com/questions/11540962/tell-nvcc-to-not-preprocess-host-code-to-avoid-boost-compiler-redefinition
-    //traceback: @sgf's-PC: http://codepad.org/3M0tgmrb
-    double getTimeMicros();
-
-};//class ScopeTimeMillis
 
 }//namespace zc
 
