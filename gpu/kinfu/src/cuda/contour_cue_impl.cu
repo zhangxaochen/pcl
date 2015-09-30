@@ -88,6 +88,11 @@ void inpaintGpu(const DepthMap& src, DepthMap& dst){
     cudaSafeCall(cudaGetLastError());
 }//inpaintGpu
 
+#define CONT_V1 0
+#if !CONT_V1
+#define CONT_V2 1
+#endif  //!CONT_V1
+
 __global__ void
 computeContoursKernel(const PtrStepSz<ushort> src, PtrStepSz<uchar> dst, int thresh){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -100,17 +105,33 @@ computeContoursKernel(const PtrStepSz<ushort> src, PtrStepSz<uchar> dst, int thr
     ushort depVal = src.ptr(y)[x];
     int xleft = max(x-1, 0), xright = min(x+1, src.cols-1),
         ytop = max(y-1, 0), ydown = min(y+1, src.rows-1);
+
+    bool isContour = false;
     for(int ix = xleft; ix <= xright; ix++){
         for(int iy = ytop; iy <= ydown; iy++){
             ushort neighbor = src.ptr(iy)[ix];
+#if CONT_V1
             if(neighbor != 0                        //无效邻域不判定
                 && neighbor - depVal > thresh)    // nbr - self, 表示物体轮廓应该更浅
             {
                 dst.ptr(y)[x] = UCHAR_MAX;
                 return;
             }
-        }
-    }
+#elif CONT_V2
+            if(neighbor == 0) //若邻域有无效值，则self不算做轮廓
+                return;
+            else if(neighbor - depVal > thresh){  // nbr - self, 表示物体轮廓应该更浅
+                isContour = true;
+            }
+#endif
+        }//for-iy
+    }//for-ix
+
+#if CONT_V2
+    if(isContour)
+        dst.ptr(y)[x] = UCHAR_MAX;
+#endif  //CONT_V2
+
 }//computeContoursKernel
 
 void computeContours( const DepthMap& src, MaskMap& dst, int thresh /*= 50*/ ){

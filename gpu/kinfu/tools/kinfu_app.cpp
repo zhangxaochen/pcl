@@ -1209,8 +1209,11 @@ struct KinFuApp
             //imshow("dmat8u", dmat8u);
 
             Mat inpDmat = zc::inpaintCpu<ushort>(dmat),
-                inpDmat8u;
+                inpDmat8u,
+                contMskShow;
             inpDmat.convertTo(inpDmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+            contMskShow = inpDmat8u.clone();
+
             putText(inpDmat8u, "inpDmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
             //imshow("inpDmat8u", inpDmat8u);
             //dmat8u.push_back(inpDmat8u); //==vconcat
@@ -1237,7 +1240,8 @@ struct KinFuApp
             Mat contMskHost(contMskDevice.rows(), contMskDevice.cols(), CV_8UC1);
             //contMskDevice.download(contMskHost.data, contMskDevice.step()); //step -> 1024, 应为 640. 不知原因
             contMskDevice.download(contMskHost.data, contMskDevice.cols());
-            imshow("contMskHost", contMskHost);
+            contMskShow.setTo(UCHAR_MAX, contMskHost);
+            imshow("contMskShow", contMskShow);
 
         }//for-pngFnames_
     }//else //this->png_source_ == true
