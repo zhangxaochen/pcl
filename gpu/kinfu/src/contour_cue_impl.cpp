@@ -41,3 +41,8 @@ void zc::test::testInpaintImplCpuAndGpu(const DepthMap &src, bool debugDraw /*= 
         imshow("testInpaintImplCpuAndGpu", tmp8u);
     }
 }//testInpaintImplCpuAndGpu
+
+double zc::ScopeTimeMicroSec::getTimeMicros(){
+    boost::posix_time::ptime end_time = boost::posix_time::microsec_clock::local_time();
+    return static_cast<double>((end_time - start_time_).total_microseconds());
+}//getTimeMicros

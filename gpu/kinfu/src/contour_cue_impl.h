@@ -131,10 +131,10 @@ public:
         std::cerr << title_ << " took " << val << " micro seconds.\n";
     }
 
-    double getTimeMicros(){
-        boost::posix_time::ptime end_time = boost::posix_time::microsec_clock::local_time();
-        return static_cast<double>((end_time - start_time_).total_microseconds());
-    }//getTimeMills
+    //@brief return execution time in micro-seconds
+    //@issue&fix move function body to .cpp file to avoid http://stackoverflow.com/questions/11540962/tell-nvcc-to-not-preprocess-host-code-to-avoid-boost-compiler-redefinition
+    //traceback: @sgf's-PC: http://codepad.org/3M0tgmrb
+    double getTimeMicros();
 
 };//class ScopeTimeMillis
 
