@@ -15,17 +15,19 @@
 namespace zc{
 
 //@brief given *inOut* as input, inpaint the holes of *inOut* on GPU
-//@param inOut, both input & output storage
+//@param depthInOut, both input & output storage
 template<typename T>
 __global__ void 
-inpaintGpuKernel(PtrStepSz<T> inOut){
-    int bid = blockIdx.x + blockIdx.y * gridDim.x;
-    int tid = bid * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x; //tid 计算对不对呢？未测试
+inpaintGpuKernel(PtrStepSz<T> depthInOut){
+    //int bid = blockIdx.x + blockIdx.y * gridDim.x;
+    //int tid = bid * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x; //tid 计算对不对呢？√... 繁琐。弃用。参考 mergePointNormal
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
     //一个 tid 对应*一行*像素：
-    if(tid > inOut.rows)
+    if(tid > depthInOut.rows)
         return;
     
-    T *row = inOut.ptr(tid);
+    T *row = depthInOut.ptr(tid);
     //左右有效-无效值边界值：
     T lValidBorderVal = 0,
         rValidBorderVal = 0;
@@ -33,7 +35,7 @@ inpaintGpuKernel(PtrStepSz<T> inOut){
     int lbIdx = -1,
         rbIdx = -1;
 
-    for(size_t j = 0; j < inOut.cols - 1; j++){
+    for(size_t j = 0; j < depthInOut.cols - 1; j++){
         if(row[j] != 0 && row[j+1] == 0){ //j有效，j+1无效
             lbIdx = j;
             lValidBorderVal = row[j];
@@ -63,7 +65,7 @@ inpaintGpuKernel(PtrStepSz<T> inOut){
         }
 
 #if INP_V1  //v1, 左/右单边无效也修补
-        if(j+1 == inOut.cols - 1 && row[j+1] == 0 //dst.cols-1 极右位置，若无效，特别处理
+        if(j+1 == depthInOut.cols - 1 && row[j+1] == 0 //dst.cols-1 极右位置，若无效，特别处理
             && lValidBorderVal != 0) //若 ==0，且极右无效，说明整行都为零，不处理
         {
             //此时必存在已更新但未使用的 lValidBorderVal：
@@ -80,8 +82,10 @@ void inpaintGpu(const DepthMap& src, DepthMap& dst){
     dst.create(src.rows(), src.cols());
     src.copyTo(dst);
 
-    dim3 block(480, 1);
-    dim3 grid = divUp(src.rows(), block.x);
+    //dim3 block(480, 1);
+    //dim3 grid = divUp(src.rows(), block.x);
+    int block = 256;
+    int grid = divUp(src.rows(), block);
 
     inpaintGpuKernel<ushort><<<grid, block>>>(dst);
 
