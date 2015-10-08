@@ -358,7 +358,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       imshow("contours",Contour_map);
       imshow("candidates",N_map);
       imshow("normals",normal_map);
-      waitKey(1);
+      //waitKey(1);
       free(contour);
       free(candidate);
 

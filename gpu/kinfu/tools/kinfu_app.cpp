@@ -1221,10 +1221,6 @@ struct KinFuApp
             pyrDown(dmat8u, dmat8u);
             imshow("dmat8u", dmat8u);
 
-            int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
-            if(key==27) //Esc
-                break;
-
             depth_.cols = dmat.cols;
             depth_.rows = dmat.rows;
             depth_.step = depth_.cols * depth_.elemSize();
@@ -1243,6 +1239,9 @@ struct KinFuApp
             contMskShow.setTo(UCHAR_MAX, contMskHost);
             imshow("contMskShow", contMskShow);
 
+            int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
+            if(key==27) //Esc
+                break;
         }//for-pngFnames_
     }//else //this->png_source_ == true
 #endif //HAVE_OPENCV
