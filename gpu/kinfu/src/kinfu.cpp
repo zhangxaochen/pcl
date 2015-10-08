@@ -572,7 +572,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                 nmap_candidate.download(tmp,step);
 
                 estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, vmap_contour, vmap_candidate, nmap_candidate, device_Rprev_inv, device_tprev, intr (level_index),
-                    vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
+                    vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data (),2.0);
             }
     #endif
             //checking nullspace

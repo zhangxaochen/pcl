@@ -104,6 +104,7 @@ namespace pcl
 
       //sunguofei
       int rows_contour;
+      double weight;
 
       mutable PtrStep<float_type> gbuf;
 
@@ -210,7 +211,10 @@ namespace pcl
             if (y<rows)
                 found_coresp = search (x, y, n, d, s);
             else
+            {
                 found_coresp = search_contourCue (x, y-rows, n, d, s);
+                n=n*weight;
+            }
         }
 
         float row[7];
@@ -394,7 +398,7 @@ pcl::device::estimateCombined (const Mat33& Rcurr, const float3& tcurr,
                                const MapArr& vmap_g_prev, const MapArr& nmap_g_prev, 
                                float distThres, float angleThres,
                                DeviceArray2D<float_type>& gbuf, DeviceArray<float_type>& mbuf,
-                               float_type* matrixA_host, float_type* vectorB_host)
+                               float_type* matrixA_host, float_type* vectorB_host,double weight)
 {
   int cols = vmap_curr.cols ();
   int rows = vmap_curr.rows () / 3;
@@ -426,6 +430,7 @@ pcl::device::estimateCombined (const Mat33& Rcurr, const float3& tcurr,
   cs.cols = cols;
   cs.rows = rows;
   cs.rows_contour = rows_contour;
+  cs.weight=weight;
 
 //////////////////////////////
 
