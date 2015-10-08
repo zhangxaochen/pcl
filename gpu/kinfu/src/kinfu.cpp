@@ -308,6 +308,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       int c=640;
       mask.download(contour,c);
       normal_mask.download(candidate,c);
+      //nmaps_g_prev_[0].download(normals,c);
       nmaps_g_prev_[0].download(normals,c);
       vmaps_g_prev_[0].download(vertexes,c);
       vmaps_curr_[0].download(vertexes_curr,c);
@@ -534,9 +535,45 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                 }
             }
             //找到对应关系之后，将其传入下边函数中，在里边进行计算
+            //两种方法：
+            //1、每一层金字塔都计算contour点和candidate点
+            //2、只在最外层金字塔计算contour点和candidate点，目前的解决思路：把已找到的对应关系存到maparr中，列数和当前vmap nmap相同，直接传入estimateCombined中
+            //   需要添加三个新的量，vmap_candidate,nmap_candidate,vmap_contour
 
-            estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
+            //为了能够把对应点按照要求传进去，做两个事
+            //1、重新排序，现在是xyzxyz...，改成xxx..yyy..zzz..
+            //2、除以当前map的列数，去掉余出来的部分
+            int contour_size=cores_v_curr.size()/3/int(vmap_curr.cols())*int(vmap_curr.cols());
+            vector<float> cores_n_prev_new,cores_v_prev_new,cores_v_curr_new;
+            for (int k1=0;k1<3;++k1)
+            {
+                for (int k2=0;k2<contour_size;++k2)
+                {
+                    cores_v_curr_new.push_back(cores_v_curr[k2*3+k1]);
+                    cores_v_prev_new.push_back(cores_v_prev[k2*3+k1]);
+                    cores_n_prev_new.push_back(cores_n_prev[k2*3+k1]);
+                }
+            }
+            if (cores_v_curr_new.size()==0)
+            //if (1)
+            {
+                estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
                               vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
+            }
+            else
+            {
+                int step=vmap_curr.cols();
+                MapArr vmap_candidate,nmap_candidate,vmap_contour;
+                vmap_candidate.upload(cores_v_prev_new,step);
+                nmap_candidate.upload(cores_n_prev_new,step);
+                vmap_contour.upload(cores_v_curr_new,step);
+                //test
+                vector<float> tmp;
+                nmap_candidate.download(tmp,step);
+
+                estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, vmap_contour, vmap_candidate, nmap_candidate, device_Rprev_inv, device_tprev, intr (level_index),
+                    vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
+            }
     #endif
             //checking nullspace
             double det = A.determinant ();

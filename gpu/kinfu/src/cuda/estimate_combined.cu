@@ -83,6 +83,11 @@ namespace pcl
       PtrStep<float> vmap_curr;
       PtrStep<float> nmap_curr;
 
+      //sunguofei
+      PtrStep<float> vmap_contour;
+      PtrStep<float> vmap_candidate;
+      PtrStep<float> nmap_candidate;
+
       Mat33 Rprev_inv;
       float3 tprev;
 
@@ -96,6 +101,9 @@ namespace pcl
 
       int cols;
       int rows;
+
+      //sunguofei
+      int rows_contour;
 
       mutable PtrStep<float_type> gbuf;
 
@@ -161,58 +169,27 @@ namespace pcl
       __device__ __forceinline__ bool
       search_contourCue (int x, int y, float3& n, float3& d, float3& s) const
       {
-          
-        float3 ncurr;
-        ncurr.x = nmap_curr.ptr (y)[x];
-
-        if (isnan (ncurr.x))
-          return (false);
-
         float3 vcurr;
-        vcurr.x = vmap_curr.ptr (y       )[x];
-        vcurr.y = vmap_curr.ptr (y + rows)[x];
-        vcurr.z = vmap_curr.ptr (y + 2 * rows)[x];
+        vcurr.x = vmap_contour.ptr (y       )[x];
+        vcurr.y = vmap_contour.ptr (y + rows_contour)[x];
+        vcurr.z = vmap_contour.ptr (y + 2 * rows_contour)[x];
 
         float3 vcurr_g = Rcurr * vcurr + tcurr;
 
-        float3 vcurr_cp = Rprev_inv * (vcurr_g - tprev);         // prev camera coo space
-
-        //find conresponding using kd tree
-
-        int2 ukr;         //projection
-        ukr.x = __float2int_rn (vcurr_cp.x * intr.fx / vcurr_cp.z + intr.cx);      //4
-        ukr.y = __float2int_rn (vcurr_cp.y * intr.fy / vcurr_cp.z + intr.cy);                      //4
-
-        if (ukr.x < 0 || ukr.y < 0 || ukr.x >= cols || ukr.y >= rows || vcurr_cp.z < 0)
-          return (false);
-
         float3 nprev_g;
-        nprev_g.x = nmap_g_prev.ptr (ukr.y)[ukr.x];
+        nprev_g.x = nmap_candidate.ptr (y)[x];
 
         if (isnan (nprev_g.x))
           return (false);
 
         float3 vprev_g;
-        vprev_g.x = vmap_g_prev.ptr (ukr.y       )[ukr.x];
-        vprev_g.y = vmap_g_prev.ptr (ukr.y + rows)[ukr.x];
-        vprev_g.z = vmap_g_prev.ptr (ukr.y + 2 * rows)[ukr.x];
+        vprev_g.x = vmap_candidate.ptr (y       )[x];
+        vprev_g.y = vmap_candidate.ptr (y + rows_contour)[x];
+        vprev_g.z = vmap_candidate.ptr (y + 2 * rows_contour)[x];
 
-        float dist = norm (vprev_g - vcurr_g);
-        if (dist > distThres)
-          return (false);
+        nprev_g.y = nmap_candidate.ptr (y + rows_contour)[x];
+        nprev_g.z = nmap_candidate.ptr (y + 2 * rows_contour)[x];
 
-        ncurr.y = nmap_curr.ptr (y + rows)[x];
-        ncurr.z = nmap_curr.ptr (y + 2 * rows)[x];
-
-        float3 ncurr_g = Rcurr * ncurr;
-
-        nprev_g.y = nmap_g_prev.ptr (ukr.y + rows)[ukr.x];
-        nprev_g.z = nmap_g_prev.ptr (ukr.y + 2 * rows)[ukr.x];
-
-        float sine = norm (cross (ncurr_g, nprev_g));
-
-        if (sine >= angleThres)
-          return (false);
         n = nprev_g;
         d = vprev_g;
         s = vcurr_g;
@@ -228,8 +205,13 @@ namespace pcl
         float3 n, d, s;
         bool found_coresp = false;
 
-        if (x < cols && y < rows)
-          found_coresp = search (x, y, n, d, s);
+        if (x < cols && y < rows+rows_contour)
+        {
+            if (y<rows)
+                found_coresp = search (x, y, n, d, s);
+            else
+                found_coresp = search_contourCue (x, y-rows, n, d, s);
+        }
 
         float row[7];
 
@@ -355,6 +337,8 @@ pcl::device::estimateCombined (const Mat33& Rcurr, const float3& tcurr,
 
   cs.cols = cols;
   cs.rows = rows;
+  //sunguofei
+  cs.rows_contour = 0;
 
 //////////////////////////////
 
@@ -362,6 +346,93 @@ pcl::device::estimateCombined (const Mat33& Rcurr, const float3& tcurr,
   dim3 grid (1, 1, 1);
   grid.x = divUp (cols, block.x);
   grid.y = divUp (rows, block.y);
+
+  mbuf.create (TranformReduction::TOTAL);
+  if (gbuf.rows () != TranformReduction::TOTAL || gbuf.cols () < (int)(grid.x * grid.y))
+    gbuf.create (TranformReduction::TOTAL, grid.x * grid.y);
+
+  cs.gbuf = gbuf;
+
+  combinedKernel<<<grid, block>>>(cs);
+  cudaSafeCall ( cudaGetLastError () );
+  //cudaSafeCall(cudaDeviceSynchronize());
+
+  //printFuncAttrib(combinedKernel);
+
+  TranformReduction tr;
+  tr.gbuf = gbuf;
+  tr.length = grid.x * grid.y;
+  tr.output = mbuf;
+
+  TransformEstimatorKernel2<<<TranformReduction::TOTAL, TranformReduction::CTA_SIZE>>>(tr);
+  cudaSafeCall (cudaGetLastError ());
+  cudaSafeCall (cudaDeviceSynchronize ());
+
+  float_type host_data[TranformReduction::TOTAL];
+  mbuf.download (host_data);
+
+  int shift = 0;
+  for (int i = 0; i < 6; ++i)  //rows
+    for (int j = i; j < 7; ++j)    // cols + b
+    {
+      float_type value = host_data[shift++];
+      if (j == 6)       // vector b
+        vectorB_host[i] = value;
+      else
+        matrixA_host[j * 6 + i] = matrixA_host[i * 6 + j] = value;
+    }
+}
+
+
+//sunguofei
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void
+pcl::device::estimateCombined (const Mat33& Rcurr, const float3& tcurr, 
+                               const MapArr& vmap_curr, const MapArr& nmap_curr, 
+                               const MapArr& vmap_contour, const MapArr& vmap_candidate, const MapArr& nmap_candidate,
+                               const Mat33& Rprev_inv, const float3& tprev, const Intr& intr,
+                               const MapArr& vmap_g_prev, const MapArr& nmap_g_prev, 
+                               float distThres, float angleThres,
+                               DeviceArray2D<float_type>& gbuf, DeviceArray<float_type>& mbuf,
+                               float_type* matrixA_host, float_type* vectorB_host)
+{
+  int cols = vmap_curr.cols ();
+  int rows = vmap_curr.rows () / 3;
+  int rows_contour = vmap_contour.rows () / 3;
+
+  Combined cs;
+
+  cs.Rcurr = Rcurr;
+  cs.tcurr = tcurr;
+
+  cs.vmap_curr = vmap_curr;
+  cs.nmap_curr = nmap_curr;
+
+  cs.vmap_contour = vmap_contour;
+  cs.vmap_candidate = vmap_candidate;
+  cs.nmap_candidate = nmap_candidate;
+
+  cs.Rprev_inv = Rprev_inv;
+  cs.tprev = tprev;
+
+  cs.intr = intr;
+
+  cs.vmap_g_prev = vmap_g_prev;
+  cs.nmap_g_prev = nmap_g_prev;
+
+  cs.distThres = distThres;
+  cs.angleThres = angleThres;
+
+  cs.cols = cols;
+  cs.rows = rows;
+  cs.rows_contour = rows_contour;
+
+//////////////////////////////
+
+  dim3 block (Combined::CTA_SIZE_X, Combined::CTA_SIZE_Y);
+  dim3 grid (1, 1, 1);
+  grid.x = divUp (cols, block.x);
+  grid.y = divUp (rows+rows_contour, block.y);
 
   mbuf.create (TranformReduction::TOTAL);
   if (gbuf.rows () != TranformReduction::TOTAL || gbuf.cols () < (int)(grid.x * grid.y))
