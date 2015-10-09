@@ -211,6 +211,10 @@ namespace pcl
             return contMsk_;
         }
 
+        zc::MaskMap getContCorrespMask(){
+            return contCorrespMsk_;
+        }
+
       private:
         
         /** \brief Number of pyramid levels */
@@ -313,6 +317,7 @@ namespace pcl
 
         //zhangxaochen:
         zc::MaskMap contMsk_;
+        zc::MaskMap contCorrespMsk_; //contour correspondence candidates
 
 public:
 EIGEN_MAKE_ALIGNED_OPERATOR_NEW

@@ -114,6 +114,13 @@ void computeContours(const DepthMap& src, MaskMap& dst, int thresh = 50);
 //@brief similar to *inpaintCpu*, but not a func. template
 void inpaintGpu(const DepthMap& src, DepthMap& dst);
 
+//@brief generate the contour correspondence candidates (a MaskMap repr.) using the "tangency property": "for all points along the contour generator, the normal is orthogonal to the view ray."
+//@param[in] camPos, the camera coords in global reference frame
+//@param[in] vmap, the vertex map in *GLOBAL FRAME*, to compute "view ray" with *camPos*
+//@param[in] nmap, the normal map in *GLOBAL FRAME*
+//@param[in] angleThresh, angle threshold of the "tangency property" in *degree*.
+//@param[out] outMask, contour mask
+void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const MapArr &nmap, int angleThresh, MaskMap &outMask);
 }//namespace zc
 
 #endif //_CONTOUR_CUE_IMPLEMENTATION_

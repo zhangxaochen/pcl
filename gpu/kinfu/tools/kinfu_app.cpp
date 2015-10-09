@@ -1239,6 +1239,12 @@ struct KinFuApp
             contMskShow.setTo(UCHAR_MAX, contMskHost);
             imshow("contMskShow", contMskShow);
 
+            //contour-correspondence-candidate mask
+            zc::MaskMap cccDevice = kinfu_.getContCorrespMask();
+            Mat cccHost(cccDevice.rows(), cccDevice.cols(), CV_8UC1);
+            cccDevice.download(cccHost.data, cccHost.cols * cccHost.elemSize());
+            imshow("cccHost", cccHost);
+
             int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
             if(key==27) //Esc
                 break;

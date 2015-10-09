@@ -5,14 +5,16 @@
 // #include <pcl/pcl_macros.h>
 // 
 // #include "internal.h"
-// #include "device.hpp"
+ #include "device.hpp"
 // 
 // using namespace std;
 // using namespace cv;
 
 #include <contour_cue_impl.h>
 
+
 namespace zc{
+    using namespace pcl::device;
 
 //@brief given *inOut* as input, inpaint the holes of *inOut* on GPU
 //@param depthInOut, both input & output storage
@@ -148,6 +150,61 @@ void computeContours( const DepthMap& src, MaskMap& dst, int thresh /*= 50*/ ){
 
     cudaSafeCall(cudaGetLastError());
 }//computeContours
+
+//@brief gpu kernel function to generate the Contour-Correspondence-Candidates
+//@param[in] angleThreshCos, MAX cosine of the angle threshold
+__global__ void 
+cccKernel(const float3 &camPos, const PtrStep<float> vmap, const PtrStep<float> nmap, float angleThreshCos, PtrStepSz<uchar> outMask){
+    int x = threadIdx.x + blockIdx.x * blockDim.x,
+        y = threadIdx.y + blockIdx.y * blockDim.y;
+    int cols = outMask.cols,
+        rows = outMask.rows;
+
+    if(!(x < cols && y < rows))
+        return;
+
+    float3 n, vRay;
+    n.x = nmap.ptr(y)[x];
+    vRay.x = camPos.x - vmap.ptr(y)[x];
+
+    if(isnan(n.x) || isnan(vRay.x))
+        return;
+
+    n.y = nmap.ptr(y + rows)[x];
+    n.z = nmap.ptr(y + 2 * rows)[x];
+
+    vRay.y = camPos.y - vmap.ptr(y + rows)[x];
+    vRay.z = camPos.z - vmap.ptr(y + 2 * rows)[x];
+
+    double nMod = norm(n); //理论上恒等于1？
+    double vRayMod = norm(vRay);
+
+    double cos = dot(n, vRay) / (vRayMod * nMod);
+    //printf("@@@%f, %f\n", abs(cos), angleThreshCos);
+//printf("@@@\n");
+//     if(abs(cos) < angleThreshCos){
+//         printf("###%d, %d\n", 1,2);
+//         //outMask.ptr(y)[x] = UCHAR_MAX;
+//     }
+}//cccKernel
+
+void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const MapArr &nmap, int angleThresh, MaskMap &outMask ){
+    int cols = vmap.cols();
+    int rows = vmap.rows() / 3;
+    
+    outMask.create(rows, cols);
+
+    dim3 block(32, 8);
+    dim3 grid(divUp(cols, block.x), divUp(rows, block.y));
+
+    const float angleThreshRadian = sin(angleThresh * 3.14159265359f / 180.f);
+    //float3 &deviceCamPos = device_cast<float3>(camPos);
+    cccKernel<<<grid, block>>>(camPos, vmap, nmap, angleThreshRadian, outMask);
+    
+    cudaSafeCall(cudaDeviceSynchronize());
+    cudaSafeCall(cudaGetLastError());
+}
+
 
 }//namespace zc
 

@@ -268,12 +268,19 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
         //zhangxaochen: test inpaint impl. both CPU & GPU version
         bool debugDraw = true;
-        zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw);
+        //zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw); //tested, OK.
         zc::inpaintGpu(depths_curr_[0], depths_curr_[0]);
 
         zc::computeContours(depths_curr_[0], contMsk_);
         contMskHost = Mat(contMsk_.rows(), contMsk_.cols(), CV_8UC1);
         contMsk_.download(contMskHost.data, contMskHost.cols * contMskHost.elemSize());
+        
+        Vector3f &tprev = tvecs_[global_time_ > 0 ? global_time_ - 1 : 0]; //  tranfrom from camera to global coo space for (i-1)th camera pose
+        float3& device_tprev     = device_cast<float3> (tprev);
+        zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
+//         Mat contCorrespMsk_host(contCorrespMsk_.rows(), contCorrespMsk_.cols(), CV_8UC1);
+//         contCorrespMsk_.download(contCorrespMsk_host, contCorrespMsk_host.cols * contCorrespMsk_host.elemSize());
+        
 
         //sunguofei---contour cue
         if (global_time_!=0)
