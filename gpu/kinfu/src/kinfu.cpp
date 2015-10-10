@@ -268,7 +268,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
         //zhangxaochen: test inpaint impl. both CPU & GPU version
         bool debugDraw = true;
-        //zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw); //tested, OK.
+        //zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw); //test OK.
         zc::inpaintGpu(depths_curr_[0], depths_curr_[0]);
 
         zc::computeContours(depths_curr_[0], contMsk_);
@@ -277,7 +277,12 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         
         Vector3f &tprev = tvecs_[global_time_ > 0 ? global_time_ - 1 : 0]; //  tranfrom from camera to global coo space for (i-1)th camera pose
         float3& device_tprev     = device_cast<float3> (tprev);
-        zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
+
+        DepthMap testDmap;
+        MapArr testMarr;
+        //zc::testPclCuda(testDmap, testMarr); //test OK
+        if (global_time_ != 0)
+            zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
 //         Mat contCorrespMsk_host(contCorrespMsk_.rows(), contCorrespMsk_.cols(), CV_8UC1);
 //         contCorrespMsk_.download(contCorrespMsk_host, contCorrespMsk_host.cols * contCorrespMsk_host.elemSize());
         

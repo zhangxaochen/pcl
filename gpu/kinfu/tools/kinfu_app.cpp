@@ -1218,7 +1218,8 @@ struct KinFuApp
             //imshow("inpDmat8u", inpDmat8u);
             //dmat8u.push_back(inpDmat8u); //==vconcat
             hconcat(dmat8u, inpDmat8u, dmat8u);
-            pyrDown(dmat8u, dmat8u);
+            //pyrDown(dmat8u, dmat8u);
+            resize(dmat8u, dmat8u, Size(dmat8u.cols/2, dmat8u.rows/2));
             imshow("dmat8u", dmat8u);
 
             depth_.cols = dmat.cols;
@@ -1241,9 +1242,11 @@ struct KinFuApp
 
             //contour-correspondence-candidate mask
             zc::MaskMap cccDevice = kinfu_.getContCorrespMask();
-            Mat cccHost(cccDevice.rows(), cccDevice.cols(), CV_8UC1);
-            cccDevice.download(cccHost.data, cccHost.cols * cccHost.elemSize());
-            imshow("cccHost", cccHost);
+            if(cccDevice.cols() > 0 && cccDevice.rows() > 0){
+                Mat cccHost(cccDevice.rows(), cccDevice.cols(), CV_8UC1);
+                cccDevice.download(cccHost.data, cccHost.cols * cccHost.elemSize());
+                imshow("cccHost", cccHost);
+            }
 
             int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
             if(key==27) //Esc

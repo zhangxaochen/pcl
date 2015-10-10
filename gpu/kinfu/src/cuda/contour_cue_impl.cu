@@ -157,35 +157,48 @@ __global__ void
 cccKernel(const float3 &camPos, const PtrStep<float> vmap, const PtrStep<float> nmap, float angleThreshCos, PtrStepSz<uchar> outMask){
     int x = threadIdx.x + blockIdx.x * blockDim.x,
         y = threadIdx.y + blockIdx.y * blockDim.y;
+    //printf("### %d, %d\n", x, y);
+
     int cols = outMask.cols,
         rows = outMask.rows;
+     //printf("### %d, %d, @[%d, %d]\n", x, y, cols, rows);
 
-    if(!(x < cols && y < rows))
+
+    if(!(x < cols && y < rows)){
+        printf("\t--%d, %d\n", x, y);
         return;
+    }
+
+    if(isnan(nmap.ptr(y)[x]) || isnan(vmap.ptr(y)[x])){
+        //printf("\tisnan: %d, %d\n", x, y);
+        return;
+    }
+
+    outMask.ptr(y)[x] = UCHAR_MAX;
 
     float3 n, vRay;
     n.x = nmap.ptr(y)[x];
-    vRay.x = camPos.x - vmap.ptr(y)[x];
-
-    if(isnan(n.x) || isnan(vRay.x))
-        return;
-
     n.y = nmap.ptr(y + rows)[x];
     n.z = nmap.ptr(y + 2 * rows)[x];
 
+    vRay.x = camPos.x - vmap.ptr(y)[x];
     vRay.y = camPos.y - vmap.ptr(y + rows)[x];
     vRay.z = camPos.z - vmap.ptr(y + 2 * rows)[x];
 
-    double nMod = norm(n); //理论上恒等于1？
-    double vRayMod = norm(vRay);
+    //printf("n: [%f, %f, %f]\n", n.x, n.y, n.z);
+    //printf("vRay: [%f, %f, %f]\n", vRay.x, vRay.y, vRay.z);
 
-    double cos = dot(n, vRay) / (vRayMod * nMod);
+//     double nMod = norm(n); //理论上恒等于1？
+//     double vRayMod = norm(vRay);
+    //printf("@@@ %f, %f\n", nMod, vRayMod);
+
+    //double cos = dot(n, vRay) / (vRayMod * nMod);
     //printf("@@@%f, %f\n", abs(cos), angleThreshCos);
-//printf("@@@\n");
-//     if(abs(cos) < angleThreshCos){
-//         printf("###%d, %d\n", 1,2);
-//         //outMask.ptr(y)[x] = UCHAR_MAX;
-//     }
+    //printf("@@@\n");
+//      if(abs(cos) < angleThreshCos){
+//          //printf("###%d, %d\n", 1,2);
+//          outMask.ptr(y)[x] = UCHAR_MAX;
+//      }
 }//cccKernel
 
 void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const MapArr &nmap, int angleThresh, MaskMap &outMask ){
@@ -197,13 +210,39 @@ void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const Map
     dim3 block(32, 8);
     dim3 grid(divUp(cols, block.x), divUp(rows, block.y));
 
-    const float angleThreshRadian = sin(angleThresh * 3.14159265359f / 180.f);
+    const float angleThreshCos = cos(angleThresh * 3.14159265359f / 180.f);
     //float3 &deviceCamPos = device_cast<float3>(camPos);
-    cccKernel<<<grid, block>>>(camPos, vmap, nmap, angleThreshRadian, outMask);
-    
+    printf("vmap, nmap shape: [%d, %d], [%d, %d]\n", vmap.rows(), vmap.cols(), nmap.rows(), nmap.cols());
+    cccKernel<<<grid, block>>>(camPos, vmap, nmap, angleThreshCos, outMask);
+
+    sync();
+    //cudaSafeCall(cudaDeviceSynchronize());
+    cudaSafeCall(cudaGetLastError());
+}//contourCorrespCandidate
+
+__global__ void
+testPclCudaKernel(PtrStepSz<ushort> o1, PtrStep<float> o2){
+    int x = threadIdx.x + blockIdx.x * blockDim.x,
+        y = threadIdx.y + blockIdx.y * blockDim.y;
+    if(x<3 && y<2)
+        printf("--testPclCudaKernel\n");
+}//testPclCudaKernel
+
+void testPclCuda(DepthMap &o1, MapArr &o2){
+    int rows = 480,
+        cols = 640;
+
+    o1.create(rows, cols);
+    o2.create(rows, cols);
+
+    dim3 block(32, 8);
+    dim3 grid(divUp(cols, block.x), divUp(rows, block.y));
+
+    testPclCudaKernel<<<grid, block>>>(o1, o2);
+
     cudaSafeCall(cudaDeviceSynchronize());
     cudaSafeCall(cudaGetLastError());
-}
+}//testPclCuda
 
 
 }//namespace zc

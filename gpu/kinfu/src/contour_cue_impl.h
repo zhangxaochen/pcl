@@ -95,8 +95,6 @@ typedef unsigned short ushort;
 typedef unsigned char uchar;
 typedef DeviceArray2D<uchar> MaskMap;
 
-//void bilateralFilter (const DepthMap& src, DepthMap& dst);
-
 //@author zhangxaochen
 //@brief implementing the CONTOUR-DETECTION algorithm in paper *cvpr2015-contour-cue*
 //@param[in] src, depth map on gpu, type==ushort
@@ -121,6 +119,11 @@ void inpaintGpu(const DepthMap& src, DepthMap& dst);
 //@param[in] angleThresh, angle threshold of the "tangency property" in *degree*.
 //@param[out] outMask, contour mask
 void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const MapArr &nmap, int angleThresh, MaskMap &outMask);
+
+//@brief test basic operations with pcl-cuda, since error occured when impl. *contourCorrespCandidate*; see: http://www.evernote.com/l/AY82PvIZaq9MAYJsLwSy_b43fCV0DwdcDI0/
+void testPclCuda(DepthMap &o1, MapArr &o2);
+
+
 }//namespace zc
 
 #endif //_CONTOUR_CUE_IMPLEMENTATION_
