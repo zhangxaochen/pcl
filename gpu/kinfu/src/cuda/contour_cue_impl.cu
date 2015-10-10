@@ -153,28 +153,25 @@ void computeContours( const DepthMap& src, MaskMap& dst, int thresh /*= 50*/ ){
 
 //@brief gpu kernel function to generate the Contour-Correspondence-Candidates
 //@param[in] angleThreshCos, MAX cosine of the angle threshold
+//@注意 kernel 函数参数必须为 GPU 内存指针或对象拷贝，e.g., 必须为 float3 而非 float3&
 __global__ void 
-cccKernel(const float3 &camPos, const PtrStep<float> vmap, const PtrStep<float> nmap, float angleThreshCos, PtrStepSz<uchar> outMask){
+cccKernel(const float3 camPos, const PtrStep<float> vmap, const PtrStep<float> nmap, float angleThreshCos, PtrStepSz<uchar> outMask){
     int x = threadIdx.x + blockIdx.x * blockDim.x,
         y = threadIdx.y + blockIdx.y * blockDim.y;
     //printf("### %d, %d\n", x, y);
 
     int cols = outMask.cols,
         rows = outMask.rows;
-     //printf("### %d, %d, @[%d, %d]\n", x, y, cols, rows);
 
-
-    if(!(x < cols && y < rows)){
-        printf("\t--%d, %d\n", x, y);
+    if(!(x < cols && y < rows))
         return;
-    }
+
+    outMask.ptr(y)[x] = 0;
 
     if(isnan(nmap.ptr(y)[x]) || isnan(vmap.ptr(y)[x])){
         //printf("\tisnan: %d, %d\n", x, y);
         return;
     }
-
-    outMask.ptr(y)[x] = UCHAR_MAX;
 
     float3 n, vRay;
     n.x = nmap.ptr(y)[x];
@@ -185,20 +182,13 @@ cccKernel(const float3 &camPos, const PtrStep<float> vmap, const PtrStep<float> 
     vRay.y = camPos.y - vmap.ptr(y + rows)[x];
     vRay.z = camPos.z - vmap.ptr(y + 2 * rows)[x];
 
-    //printf("n: [%f, %f, %f]\n", n.x, n.y, n.z);
-    //printf("vRay: [%f, %f, %f]\n", vRay.x, vRay.y, vRay.z);
-
-//     double nMod = norm(n); //理论上恒等于1？
-//     double vRayMod = norm(vRay);
+    double nMod = norm(n); //理论上恒等于1？
+    double vRayMod = norm(vRay);
     //printf("@@@ %f, %f\n", nMod, vRayMod);
 
-    //double cos = dot(n, vRay) / (vRayMod * nMod);
-    //printf("@@@%f, %f\n", abs(cos), angleThreshCos);
-    //printf("@@@\n");
-//      if(abs(cos) < angleThreshCos){
-//          //printf("###%d, %d\n", 1,2);
-//          outMask.ptr(y)[x] = UCHAR_MAX;
-//      }
+    double cosine = dot(n, vRay) / (vRayMod * nMod);
+    if(abs(cosine) < angleThreshCos)
+        outMask.ptr(y)[x] = UCHAR_MAX;
 }//cccKernel
 
 void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const MapArr &nmap, int angleThresh, MaskMap &outMask ){
@@ -211,8 +201,7 @@ void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const Map
     dim3 grid(divUp(cols, block.x), divUp(rows, block.y));
 
     const float angleThreshCos = cos(angleThresh * 3.14159265359f / 180.f);
-    //float3 &deviceCamPos = device_cast<float3>(camPos);
-    printf("vmap, nmap shape: [%d, %d], [%d, %d]\n", vmap.rows(), vmap.cols(), nmap.rows(), nmap.cols());
+    //printf("vmap, nmap shape: [%d, %d], [%d, %d]\n", vmap.rows(), vmap.cols(), nmap.rows(), nmap.cols()); //test OK
     cccKernel<<<grid, block>>>(camPos, vmap, nmap, angleThreshCos, outMask);
 
     sync();

@@ -1240,7 +1240,7 @@ struct KinFuApp
             contMskShow.setTo(UCHAR_MAX, contMskHost);
             imshow("contMskShow", contMskShow);
 
-            //contour-correspondence-candidate mask
+            //contour-correspondence-candidate mask debug show
             zc::MaskMap cccDevice = kinfu_.getContCorrespMask();
             if(cccDevice.cols() > 0 && cccDevice.rows() > 0){
                 Mat cccHost(cccDevice.rows(), cccDevice.cols(), CV_8UC1);

@@ -283,9 +283,6 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         //zc::testPclCuda(testDmap, testMarr); //test OK
         if (global_time_ != 0)
             zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
-//         Mat contCorrespMsk_host(contCorrespMsk_.rows(), contCorrespMsk_.cols(), CV_8UC1);
-//         contCorrespMsk_.download(contCorrespMsk_host, contCorrespMsk_host.cols * contCorrespMsk_host.elemSize());
-        
 
         //sunguofei---contour cue
         if (global_time_!=0)
