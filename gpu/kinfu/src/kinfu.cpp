@@ -314,80 +314,80 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       vector<float> contour_curr;
       if (global_time_!=0)
       {
-      int c=640;
-      mask.download(contour,c);
-      normal_mask.download(candidate,c);
-      //nmaps_g_prev_[0].download(normals,c);
-      nmaps_g_prev_[0].download(normals,c);
-      vmaps_g_prev_[0].download(vertexes,c);
-      vmaps_curr_[0].download(vertexes_curr,c);
+          int c=640;
+          mask.download(contour,c);
+          normal_mask.download(candidate,c);
+          //nmaps_g_prev_[0].download(normals,c);
+          nmaps_g_prev_[0].download(normals,c);
+          vmaps_g_prev_[0].download(vertexes,c);
+          vmaps_curr_[0].download(vertexes_curr,c);
 
-      //根据得到的数据，将contour candidate取出来，用来构建kd tree
-      for (int i=0;i<vertexes.size()/3;++i)
-      {
-          if (candidate[i]==255)
+          //根据得到的数据，将contour candidate取出来，用来构建kd tree
+          for (int i=0;i<vertexes.size()/3;++i)
           {
-              contour_candidate.push_back(vertexes[i]);
-              contour_candidate.push_back(vertexes[i+vertexes.size()/3]);
-              contour_candidate.push_back(vertexes[i+2*vertexes.size()/3]);
+              if (candidate[i]==255)
+              {
+                  contour_candidate.push_back(vertexes[i]);
+                  contour_candidate.push_back(vertexes[i+vertexes.size()/3]);
+                  contour_candidate.push_back(vertexes[i+2*vertexes.size()/3]);
 
 
-              contour_candidate_normal.push_back(normals[i]);
-              contour_candidate_normal.push_back(normals[i+vertexes.size()/3]);
-              contour_candidate_normal.push_back(normals[i+2*vertexes.size()/3]);
+                  contour_candidate_normal.push_back(normals[i]);
+                  contour_candidate_normal.push_back(normals[i+vertexes.size()/3]);
+                  contour_candidate_normal.push_back(normals[i+2*vertexes.size()/3]);
+              }
           }
-      }
-      for (int i=0;i<vertexes_curr.size()/3;++i)
-      {
-          if(contour[i]==255)
+          for (int i=0;i<vertexes_curr.size()/3;++i)
           {
-              contour_curr.push_back(vertexes_curr[i]);
-              contour_curr.push_back(vertexes_curr[i+vertexes_curr.size()/3]);
-              contour_curr.push_back(vertexes_curr[i+2*vertexes_curr.size()/3]);
+              if(contour[i]==255)
+              {
+                  contour_curr.push_back(vertexes_curr[i]);
+                  contour_curr.push_back(vertexes_curr[i+vertexes_curr.size()/3]);
+                  contour_curr.push_back(vertexes_curr[i+2*vertexes_curr.size()/3]);
+              }
           }
-      }
 
-      Mat Contour_map=Mat::zeros(480,640,CV_8U);
-      Mat N_map=Mat::zeros(480,640,CV_8U);
-      Mat normal_map=Mat::zeros(480,640,CV_32FC3);
-      for (int i=0;i<480;++i)
-      {
-          for (int j=0;j<640;++j)
+          Mat Contour_map=Mat::zeros(480,640,CV_8U);
+          Mat N_map=Mat::zeros(480,640,CV_8U);
+          Mat normal_map=Mat::zeros(480,640,CV_32FC3);
+          for (int i=0;i<480;++i)
           {
-              Contour_map.at<uchar>(i,j)=contour[i*640+j];
-              N_map.at<uchar>(i,j)=candidate[i*640+j];
-              normal_map.at<Vector3f>(i,j)[0]=normals[i*640+j];
-              normal_map.at<Vector3f>(i,j)[1]=normals[(i+480)*640+j];
-              normal_map.at<Vector3f>(i,j)[2]=normals[(i+480*2)*640+j];
-              //cout<<a[i*640+j]<<" ";
+              for (int j=0;j<640;++j)
+              {
+                  Contour_map.at<uchar>(i,j)=contour[i*640+j];
+                  N_map.at<uchar>(i,j)=candidate[i*640+j];
+                  normal_map.at<Vector3f>(i,j)[0]=normals[i*640+j];
+                  normal_map.at<Vector3f>(i,j)[1]=normals[(i+480)*640+j];
+                  normal_map.at<Vector3f>(i,j)[2]=normals[(i+480*2)*640+j];
+                  //cout<<a[i*640+j]<<" ";
+              }
+              //cout<<endl;
           }
-          //cout<<endl;
-      }
-      Contour_map.setTo(128, contMskHost != 0);
-      imshow("contours",Contour_map);
-      imshow("candidates",N_map);
-      imshow("normals",normal_map);
-      //waitKey(1);
-      free(contour);
-      free(candidate);
+          Contour_map.setTo(128, contMskHost != 0);
+          imshow("contours",Contour_map);
+          imshow("candidates",N_map);
+          imshow("normals",normal_map);
+          //waitKey(1);
+          free(contour);
+          free(candidate);
 
 
 
-      // Generate pointcloud data
-      cloud->width = contour_candidate.size()/3;
-      cloud->height = 1;
-      cloud->points.resize (cloud->width * cloud->height);
+          // Generate pointcloud data
+          cloud->width = contour_candidate.size()/3;
+          cloud->height = 1;
+          cloud->points.resize (cloud->width * cloud->height);
 
-      for (size_t i = 0; i < cloud->points.size (); ++i)
-      {
-          cloud->points[i].x = contour_candidate[i*3];
-          cloud->points[i].y = contour_candidate[i*3+1];
-          cloud->points[i].z = contour_candidate[i*3+2];
-      }
+          for (size_t i = 0; i < cloud->points.size (); ++i)
+          {
+              cloud->points[i].x = contour_candidate[i*3];
+              cloud->points[i].y = contour_candidate[i*3+1];
+              cloud->points[i].z = contour_candidate[i*3+2];
+          }
 
 
-      kdtree.setInputCloud (cloud);
-      
+          kdtree.setInputCloud (cloud);
+
       }
 
 
