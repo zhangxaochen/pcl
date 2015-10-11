@@ -137,7 +137,7 @@ printHelp (int, char **argv)
   print_info ("                                                Note: the use of VBOs will enable the visualization of larger datasets at the expense of extra RAM.\n");
   print_info ("                                                See http://en.wikipedia.org/wiki/Vertex_Buffer_Object for more information.\n");
   print_info ("\n");
-  print_info ("                     -use_point_picking       = enable the usage of picking points on screen (default "); print_value ("disabled"); print_info (")\n");
+  print_info ("               -pp | -use_point_picking       = enable the usage of picking points on screen (default "); print_value ("disabled"); print_info (")\n");
   print_info ("\n");
   print_info ("                     -optimal_label_colors    = maps existing labels to the optimal sequential glasbey colors, label_ids will not be mapped to fixed colors (default "); print_value ("disabled"); print_info (")\n");
   print_info ("\n");
@@ -281,7 +281,7 @@ main (int argc, char** argv)
   if (use_vbos) 
     print_highlight ("Vertex Buffer Object (VBO) visualization enabled.\n");
 
-  bool use_pp   = pcl::console::find_switch (argc, argv, "-use_point_picking");
+  bool use_pp   = pcl::console::find_switch (argc, argv, "-use_point_picking") || pcl::console::find_switch (argc, argv, "-pp");
   if (use_pp) 
     print_highlight ("Point picking enabled.\n");
 
