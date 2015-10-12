@@ -1240,7 +1240,7 @@ struct KinFuApp
             contMskDevice.download(contMskHost.data, contMskDevice.cols());
             contMskShow.setTo(UCHAR_MAX, contMskHost);
             imshow("contMskShow", contMskShow);
-            printf("contMskHost: %d\n", countNonZero(contMskHost));
+            printf("zc:contMskHost: %d\n", countNonZero(contMskHost));
 
             //contour-correspondence-candidate mask debug show
             zc::MaskMap cccDevice = kinfu_.getContCorrespMask();

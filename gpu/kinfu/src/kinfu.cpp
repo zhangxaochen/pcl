@@ -57,6 +57,7 @@ using namespace cv;
 
 //zhangxaochen:
 #include "zcUtility.h"
+using zc::ScopeTimeMicroSec;
 
 using namespace std;
 using namespace pcl::device;
@@ -267,27 +268,48 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           device::truncateDepth(depths_curr_[0], max_icp_distance_);
 
         //zhangxaochen: test inpaint impl. both CPU & GPU version
+        {
+        ScopeTimeMicroSec time("zc-inpaintGpu+computeContours+contourCorrespCandidate"); //3ms, 
+        //加上下面四个 ScopeTimeMicroSec 会导致时间骤增为 15ms
+
         bool debugDraw = true;
         //zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw); //test OK.
+        {
+        //ScopeTimeMicroSec time("|-zc-inpaintGpu"); //2ms
         zc::inpaintGpu(depths_curr_[0], depths_curr_[0]);
+        }
 
+        {
+        //ScopeTimeMicroSec time("|-zc-computeContours"); //0ms
         zc::computeContours(depths_curr_[0], contMsk_);
+        }
+        {
+        //ScopeTimeMicroSec time("|-zc-contMsk_.download"); //1ms
         contMskHost = Mat(contMsk_.rows(), contMsk_.cols(), CV_8UC1);
         contMsk_.download(contMskHost.data, contMskHost.cols * contMskHost.elemSize());
-        
+        }
+
         Vector3f &tprev = tvecs_[global_time_ > 0 ? global_time_ - 1 : 0]; //  tranfrom from camera to global coo space for (i-1)th camera pose
         float3& device_tprev     = device_cast<float3> (tprev);
 
         //DepthMap testDmap;
         //MapArr testMarr;
         //zc::testPclCuda(testDmap, testMarr); //test OK
-        if (global_time_ != 0)
+        if (global_time_ != 0){
+            {
+            //ScopeTimeMicroSec time("|-zc-contourCorrespCandidate"); //1ms
             zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
+            }
+        }
+        }//ScopeTimeMicroSec time "zc..."
 
         //sunguofei---contour cue
         if (global_time_!=0)
         {
+            {
+            //ScopeTimeMicroSec time("|-sgf-computeContours"); //0ms
             device::computeContours(depths_curr_[0],mask);
+            }
         }
 
         for (int i = 1; i < LEVELS; ++i)
@@ -301,12 +323,16 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         }
         if (global_time_!=0)
         {
+            {
+            //ScopeTimeMicroSec time("|-sgf-computeCandidate"); //1ms
             device::computeCandidate(nmaps_g_prev_[0],vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.26);
+            }
         }
         pcl::device::sync ();
       }
 
       //build kd tree for vertex on the normal mask
+
       pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
       pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
       vector<float> contour_candidate;
@@ -315,6 +341,9 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       if (global_time_!=0 && 
           !icp_orig_ && icp_sgf_cpu_)
       {
+          {
+          //ScopeTimeMicroSec time("|-sgf-kdtree-total"); //130ms
+
           int c=640;
           mask.download(contour,c);
           normal_mask.download(candidate,c);
@@ -364,7 +393,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
               }
               //cout<<endl;
           }
-          //Contour_map.setTo(128, contMskHost != 0); //sgf 已修正，故灰、白重合 √
+          printf("sgf:Contour_map: %d\n", countNonZero(Contour_map));
+          Contour_map.setTo(128, contMskHost != 0); //sgf 已修正，故灰、白重合 √
           imshow("contours",Contour_map);
           imshow("candidates",N_map);
           imshow("normals",normal_map);
@@ -386,11 +416,11 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
               cloud->points[i].z = contour_candidate[i*3+2];
           }
 
-
           kdtree.setInputCloud (cloud);
 
+          }//ScopeTimeMicroSec time("sgf-kdtree-total");
       }
-
+      
 
       //can't perform more on first frame
       if (global_time_ == 0)
@@ -467,7 +497,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
       bool illCondMat = false;
       {
-        //ScopeTime time("icp-all");
+        //ScopeTime time("icp-all"); //600~900ms
         for (int level_index = LEVELS-1; level_index>=0; --level_index)
         {
           if(hint && illCondMat)
@@ -507,6 +537,9 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                     vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
             }
             else if(icp_sgf_cpu_){
+                {
+                //ScopeTimeMicroSec time("|-icp_sgf_cpu_"); //35ms (*19=665ms)
+
                 //sunguofei---contour cue
                 vector<float> cores_v_curr;
                 vector<float> cores_v_prev;
@@ -559,7 +592,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                 //1、重新排序，现在是xyzxyz...，改成xxx..yyy..zzz..
                 //2、除以当前map的列数，去掉余出来的部分
                 int contour_size=cores_v_curr.size()/3/int(vmap_curr.cols())*int(vmap_curr.cols());
-                if(level_index == 0 && iter == 0)
+                if(level_index == 0 && iter == iter_num - 1)
                     printf("contour_size: %d, %d\n", contour_size, cores_v_curr.size()/3);
 
                 vector<float> cores_n_prev_new,cores_v_prev_new,cores_v_curr_new;
@@ -593,6 +626,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                         vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data (),2.0);
                 }
 
+                }//ScopeTimeMicroSec
             }
             else if(icp_cc_inc_weight){
                 zc::computeContours(depths_curr_[level_index], contMsk_);
@@ -659,8 +693,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             Rcurr = Rinc * Rcurr;
 //             if(illCondMat)
 //                 break; //仍然往下走，算一下
-          }
-        }
+          }//for-iter
+        }//for-level_index
       }
       //save tranform
       //if (cond>1e5)
