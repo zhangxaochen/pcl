@@ -278,8 +278,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         Vector3f &tprev = tvecs_[global_time_ > 0 ? global_time_ - 1 : 0]; //  tranfrom from camera to global coo space for (i-1)th camera pose
         float3& device_tprev     = device_cast<float3> (tprev);
 
-        DepthMap testDmap;
-        MapArr testMarr;
+        //DepthMap testDmap;
+        //MapArr testMarr;
         //zc::testPclCuda(testDmap, testMarr); //test OK
         if (global_time_ != 0)
             zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
@@ -312,7 +312,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       vector<float> contour_candidate;
       vector<float> contour_candidate_normal;
       vector<float> contour_curr;
-      if (global_time_!=0)
+      if (global_time_!=0 && 
+          !icp_orig_ && icp_sgf_cpu_)
       {
           int c=640;
           mask.download(contour,c);
@@ -356,14 +357,14 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
               {
                   Contour_map.at<uchar>(i,j)=contour[i*640+j];
                   N_map.at<uchar>(i,j)=candidate[i*640+j];
-                  normal_map.at<Vector3f>(i,j)[0]=normals[i*640+j];
-                  normal_map.at<Vector3f>(i,j)[1]=normals[(i+480)*640+j];
-                  normal_map.at<Vector3f>(i,j)[2]=normals[(i+480*2)*640+j];
+                  normal_map.at<Vec3f>(i,j)[0]=normals[i*640+j];
+                  normal_map.at<Vec3f>(i,j)[1]=normals[(i+480)*640+j];
+                  normal_map.at<Vec3f>(i,j)[2]=normals[(i+480*2)*640+j];
                   //cout<<a[i*640+j]<<" ";
               }
               //cout<<endl;
           }
-          Contour_map.setTo(128, contMskHost != 0);
+          //Contour_map.setTo(128, contMskHost != 0); //sgf 已修正，故灰、白重合 √
           imshow("contours",Contour_map);
           imshow("candidates",N_map);
           imshow("normals",normal_map);
@@ -501,88 +502,104 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             //ma.download(cpu);
             //cv::imshow(names[level_index] + string(" --- coresp white == -1"), cpu == -1);
     #else
-            //sunguofei---contour cue
-            vector<float> cores_v_curr;
-            vector<float> cores_v_prev;
-            vector<float> cores_n_prev;
-            //对当前深度图中的contour上的点寻找对应点，并按顺序存起来
-            for (int i=0;i<contour_curr.size()/3;++i)
-            {
-                pcl::PointXYZ searchpoint;
-                //每个点是在当前相机坐标系下的，根据R_curr和t_curr，将他们转换到世界坐标系下（因为上一帧模型得到的点都是在世界坐标系下的）
-                Vector3f point;
-                point(0,0)=contour_curr[i*3];
-                point(1,0)=contour_curr[i*3+1];
-                point(2,0)=contour_curr[i*3+2];
-                point=Rcurr*point+tcurr;
-                searchpoint.x=point(0,0);
-                searchpoint.y=point(1,0);
-                searchpoint.z=point(2,0);
-
-                vector<int> pointIdxSearch(1);
-                vector<float> pointSquaredDistance(1);
-
-                float radius = 0.1;
-
-                if ( kdtree.nearestKSearch (searchpoint, 1, pointIdxSearch, pointSquaredDistance) > 0 )
+            if(icp_orig_){
+                estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
+                    vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
+            }
+            else if(icp_sgf_cpu_){
+                //sunguofei---contour cue
+                vector<float> cores_v_curr;
+                vector<float> cores_v_prev;
+                vector<float> cores_n_prev;
+                //对当前深度图中的contour上的点寻找对应点，并按顺序存起来
+                for (int i=0;i<contour_curr.size()/3;++i)
                 {
-                    if (pointSquaredDistance[0]<=radius*radius)
+                    pcl::PointXYZ searchpoint;
+                    //每个点是在当前相机坐标系下的，根据R_curr和t_curr，将他们转换到世界坐标系下（因为上一帧模型得到的点都是在世界坐标系下的）
+                    Vector3f point;
+                    point(0,0)=contour_curr[i*3];
+                    point(1,0)=contour_curr[i*3+1];
+                    point(2,0)=contour_curr[i*3+2];
+                    point=Rcurr*point+tcurr;
+                    searchpoint.x=point(0,0);
+                    searchpoint.y=point(1,0);
+                    searchpoint.z=point(2,0);
+
+                    vector<int> pointIdxSearch(1);
+                    vector<float> pointSquaredDistance(1);
+
+                    float radius = 0.1;
+
+                    if ( kdtree.nearestKSearch (searchpoint, 1, pointIdxSearch, pointSquaredDistance) > 0 )
                     {
-                        //找到满足要求的对应点，将他们存在vector中，下标相同的点是一组对应点
-                        cores_v_curr.push_back(contour_curr[i*3]);
-                        cores_v_curr.push_back(contour_curr[i*3+1]);
-                        cores_v_curr.push_back(contour_curr[i*3+2]);
+                        if (pointSquaredDistance[0]<=radius*radius)
+                        {
+                            //找到满足要求的对应点，将他们存在vector中，下标相同的点是一组对应点
+                            cores_v_curr.push_back(contour_curr[i*3]);
+                            cores_v_curr.push_back(contour_curr[i*3+1]);
+                            cores_v_curr.push_back(contour_curr[i*3+2]);
 
-                        cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].x);
-                        cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].y);
-                        cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].z);
+                            cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].x);
+                            cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].y);
+                            cores_v_prev.push_back(cloud->points[ pointIdxSearch[0] ].z);
 
-                        cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3 ]);
-                        cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3+1 ]);
-                        cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3+2 ]);
+                            cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3 ]);
+                            cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3+1 ]);
+                            cores_n_prev.push_back(contour_candidate_normal[ pointIdxSearch[0]*3+2 ]);
+                        }
                     }
                 }
-            }
-            //找到对应关系之后，将其传入下边函数中，在里边进行计算
-            //两种方法：
-            //1、每一层金字塔都计算contour点和candidate点
-            //2、只在最外层金字塔计算contour点和candidate点，目前的解决思路：把已找到的对应关系存到maparr中，列数和当前vmap nmap相同，直接传入estimateCombined中
-            //   需要添加三个新的量，vmap_candidate,nmap_candidate,vmap_contour
+                //找到对应关系之后，将其传入下边函数中，在里边进行计算
+                //两种方法：
+                //1、每一层金字塔都计算contour点和candidate点
+                //2、只在最外层金字塔计算contour点和candidate点，目前的解决思路：把已找到的对应关系存到maparr中，列数和当前vmap nmap相同，直接传入estimateCombined中
+                //   需要添加三个新的量，vmap_candidate,nmap_candidate,vmap_contour
 
-            //为了能够把对应点按照要求传进去，做两个事
-            //1、重新排序，现在是xyzxyz...，改成xxx..yyy..zzz..
-            //2、除以当前map的列数，去掉余出来的部分
-            int contour_size=cores_v_curr.size()/3/int(vmap_curr.cols())*int(vmap_curr.cols());
-            vector<float> cores_n_prev_new,cores_v_prev_new,cores_v_curr_new;
-            for (int k1=0;k1<3;++k1)
-            {
-                for (int k2=0;k2<contour_size;++k2)
+                //为了能够把对应点按照要求传进去，做两个事
+                //1、重新排序，现在是xyzxyz...，改成xxx..yyy..zzz..
+                //2、除以当前map的列数，去掉余出来的部分
+                int contour_size=cores_v_curr.size()/3/int(vmap_curr.cols())*int(vmap_curr.cols());
+                if(level_index == 0 && iter == 0)
+                    printf("contour_size: %d, %d\n", contour_size, cores_v_curr.size()/3);
+
+                vector<float> cores_n_prev_new,cores_v_prev_new,cores_v_curr_new;
+                for (int k1=0;k1<3;++k1)
                 {
-                    cores_v_curr_new.push_back(cores_v_curr[k2*3+k1]);
-                    cores_v_prev_new.push_back(cores_v_prev[k2*3+k1]);
-                    cores_n_prev_new.push_back(cores_n_prev[k2*3+k1]);
+                    for (int k2=0;k2<contour_size;++k2)
+                    {
+                        cores_v_curr_new.push_back(cores_v_curr[k2*3+k1]);
+                        cores_v_prev_new.push_back(cores_v_prev[k2*3+k1]);
+                        cores_n_prev_new.push_back(cores_n_prev[k2*3+k1]);
+                    }
                 }
-            }
-            if (cores_v_curr_new.size()==0)
-            //if (1)
-            {
-                estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
-                              vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
-            }
-            else
-            {
-                int step=vmap_curr.cols();
-                MapArr vmap_candidate,nmap_candidate,vmap_contour;
-                vmap_candidate.upload(cores_v_prev_new,step);
-                nmap_candidate.upload(cores_n_prev_new,step);
-                vmap_contour.upload(cores_v_curr_new,step);
-                //test
-                vector<float> tmp;
-                nmap_candidate.download(tmp,step);
+                if (cores_v_curr_new.size()==0)
+                    //if (1)
+                {
+                    estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
+                        vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
+                }
+                else
+                {
+                    int step=vmap_curr.cols();
+                    MapArr vmap_candidate,nmap_candidate,vmap_contour;
+                    vmap_candidate.upload(cores_v_prev_new,step);
+                    nmap_candidate.upload(cores_n_prev_new,step);
+                    vmap_contour.upload(cores_v_curr_new,step);
+                    //test
+                    vector<float> tmp;
+                    nmap_candidate.download(tmp,step);
 
-                estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, vmap_contour, vmap_candidate, nmap_candidate, device_Rprev_inv, device_tprev, intr (level_index),
-                    vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data (),2.0);
+                    estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, vmap_contour, vmap_candidate, nmap_candidate, device_Rprev_inv, device_tprev, intr (level_index),
+                        vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data (),2.0);
+                }
+
             }
+            else if(icp_cc_inc_weight){
+                zc::computeContours(depths_curr_[level_index], contMsk_);
+                estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
+                    vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data (), contMsk_, this->contWeight_);
+            }
+
     #endif
             //checking nullspace
             double det = A.determinant ();
@@ -590,7 +607,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             //sunguofei
             Eigen::Matrix<double,6,6,Eigen::RowMajor>::EigenvaluesReturnType eigenvalues = A.eigenvalues();
             cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
-            cout << "eigenvalues: " << eigenvalues << endl;
+            //cout << "eigenvalues: " << eigenvalues << endl;
             cond=sqrt(cond);
             cout<<"condition of A: "<<cond<<endl;
 //             if (cond>100)
