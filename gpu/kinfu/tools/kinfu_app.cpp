@@ -1206,6 +1206,7 @@ struct KinFuApp
             Mat dmat8u;
             dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
             putText(dmat8u, "dmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
+            putText(dmat8u, "fid: "+to_string((long long) i), Point(0, 50), FONT_HERSHEY_PLAIN, 2, 255);
             //imshow("dmat8u", dmat8u);
 
             Mat inpDmat = zc::inpaintCpu<ushort>(dmat),
@@ -1239,6 +1240,7 @@ struct KinFuApp
             contMskDevice.download(contMskHost.data, contMskDevice.cols());
             contMskShow.setTo(UCHAR_MAX, contMskHost);
             imshow("contMskShow", contMskShow);
+            printf("contMskHost: %d\n", countNonZero(contMskHost));
 
             //contour-correspondence-candidate mask debug show
             zc::MaskMap cccDevice = kinfu_.getContCorrespMask();
@@ -1371,6 +1373,8 @@ struct KinFuApp
   bool show_gdepth_; //show-generated-depth. 是否显示当前时刻 (模型, 视角) 对应的深度图
 
   vector<double> csvRtCurrRow_; //csv 文件读到的当前一行
+  //string icp_impl_str_;
+
 
   //sunguofei
   vector<vector<double>> synthetic_RT;
@@ -1626,6 +1630,33 @@ main (int argc, char* argv[])
       app.show_gdepth_ = true; //似乎多余。暂时放着
       app.initGenDepthView(visualization);
   }
+
+  string choose_icp_impl = "";
+  if(pc::parse_argument(argc, argv, "-icp_impl", choose_icp_impl) > 0){
+      if(choose_icp_impl == ""){ //default， kinfu 原来的实现
+          app.kinfu_.icp_orig_ = true;
+      }
+      else{
+          app.kinfu_.icp_orig_ = false;
+          if(choose_icp_impl == "sgf_cpu"){ //孙国飞 cpu 上 kdTreeFlann 查找 contour-cue 对应点实现, 
+              app.kinfu_.icp_sgf_cpu_ = true;
+          }
+          else if(choose_icp_impl == "cc_inc_weight"){ //仅增加 curr-depth 上找到的 contour-cue 的权重，仍用原 kinfu 对应点 search 算法
+              //其实没增加 weight， 用的默认值 1；请用参数 -cc_inc_weight
+              app.kinfu_.icp_sgf_cpu_ = false;
+              app.kinfu_.icp_cc_inc_weight = true;
+          }
+      }
+  }
+
+  float contWeight = 1;
+  if(pc::parse_argument(argc, argv, "-cc_inc_weight", contWeight) > 0){
+      app.kinfu_.icp_sgf_cpu_ = false;
+      app.kinfu_.icp_cc_inc_weight = true;
+
+      app.kinfu_.contWeight_ = contWeight;
+  }
+
 
   //sunguofei
   app.synthetic_RT=R_t;

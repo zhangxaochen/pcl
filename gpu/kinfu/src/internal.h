@@ -221,6 +221,18 @@ namespace pcl
         const MapArr& vmap_g_prev, const MapArr& nmap_g_prev, float distThres, float angleThres,
         DeviceArray2D<double>& gbuf, DeviceArray<double>& mbuf, double* matrixA_host, double* vectorB_host,double weight=1.0);
 
+    //@author zhangxaochen
+    //@brief 比原 estimateCombined 函数增加 ①当前帧contourMsk；②contour权重参数contWeight(>1)
+    void
+    estimateCombined(const Mat33 &Rcurr, const float3 &tcurr,
+                     const MapArr &vmap_curr, const MapArr &nmap_curr, 
+                     const Mat33 &Rprev_inv, const float3 &tprev, const Intr &intr,
+                     const MapArr &vmap_g_prev, const MapArr &nmap_g_prev, 
+                     float distThres, float angleThres,
+                     DeviceArray2D<double> &gbuf, DeviceArray<double> &mbuf, 
+                     double *matrixA_host, double *vectorB_host,
+                     DeviceArray2D<unsigned char> &contourMsk, float contWeight);
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // TSDF volume functions            

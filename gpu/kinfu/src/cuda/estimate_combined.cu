@@ -39,6 +39,9 @@
 //#include <pcl/gpu/utils/device/funcattrib.hpp>
 #include "device.hpp"
 
+//zhangxaochen:
+#include <assert.h>
+
 namespace pcl
 {
   namespace device
@@ -256,6 +259,117 @@ namespace pcl
       cs ();
     }
 
+    //@brief 为了验证 combinedKernel 传参是否导致每个 kernel thread 构造一个 CombinedCCW 实例，又不想手写 CombinedCCW-copy-ctor
+    struct CombinedCCWLog{
+        CombinedCCWLog(){
+            printf("CombinedCCWLog-ctor\n");
+        }
+    };
+
+    __device__ int g_contCorrespCounter = 0;
+
+    //@author zhangxaochen
+    //@brief CCW, i.e., Contour-Cue increased Weight
+    struct CombinedCCW : public Combined{
+        PtrStepSz<unsigned char> contourMsk;
+        float contWeight;
+        int contCorrespCounter;
+        //CombinedCCWLog tmpLog; //结果： default-ctor 前输出了 log； copy-ctor 没有
+
+        CombinedCCW() : contWeight(-1), contCorrespCounter(0)
+        {
+            //printf("CombinedCCW-default-ctor~\n"); //默认构造, estimateCombined(host)中调用，非每个线程构造一次
+                                                   //def-ctor, copy-ctor 中都故意不初始化 CombinedCCWLog， 但是其构造函数居然都调用了！
+                                                   //copy-ctor 亦非每个线程构造一次。见：http://www.evernote.com/l/AY_3ITYZDqhPuZ4RuNiQzt6SjXKq9pcdvqw/
+        }
+        //CombinedCCW(const CombinedCCW &other)
+        //{
+        //    Rcurr = other.Rcurr;
+        //    tcurr = other.tcurr;
+        //    vmap_curr = other.vmap_curr;
+        //    nmap_curr = other.nmap_curr;
+        //    vmap_contour = other.vmap_contour;
+        //    vmap_candidate = other.vmap_candidate;
+        //    nmap_candidate = other.nmap_candidate;
+        //    Rprev_inv = other.Rprev_inv;
+        //    tprev = other.tprev;
+        //    intr = other.intr;
+        //    vmap_g_prev = other.vmap_g_prev;
+        //    nmap_g_prev = other.nmap_g_prev;
+        //    distThres = other.distThres;
+        //    angleThres = other.angleThres;
+        //    cols = other.cols;
+        //    rows = other.rows;
+        //    rows_contour = other.rows_contour;
+        //    weight = other.weight;
+        //    gbuf = other.gbuf;
+
+        //    printf("CombinedCCW-copy-ctor~\n"); //
+        //}
+
+        __device__ __forceinline__ void
+        operator () () const
+        {
+            int x = threadIdx.x + blockIdx.x * CTA_SIZE_X;
+            int y = threadIdx.y + blockIdx.y * CTA_SIZE_Y;
+
+            float3 n, d, s;
+            bool found_coresp = false;
+
+            if (x < cols && y < rows)
+                found_coresp = search (x, y, n, d, s);
+
+            float row[7];
+
+            if (found_coresp)
+            {
+                if(contWeight > 0){
+                    unsigned char mskVal = contourMsk.ptr(y)[x];
+                    if(mskVal != 0){
+                        //atomicAdd(&contCorrespCounter, 1); //Error: unsupported operation, 可能 __device__ 原因？ 不懂，未解决！
+                        atomicAdd(&g_contCorrespCounter, 1);
+                        n = n * contWeight;
+                        //printf("mskVal: %d, [%f, %f, %f]\n", mskVal, n.x, n.y, n.z);
+                    }
+                }
+
+                *(float3*)&row[0] = cross (s, n);
+                *(float3*)&row[3] = n;
+                row[6] = dot (n, d - s);
+            }
+            else
+                row[0] = row[1] = row[2] = row[3] = row[4] = row[5] = row[6] = 0.f;
+
+            __shared__ float_type smem[CTA_SIZE];
+            int tid = Block::flattenedThreadId ();
+
+            int shift = 0;
+            for (int i = 0; i < 6; ++i)        //rows
+            {
+#pragma unroll
+                for (int j = i; j < 7; ++j)          // cols + b
+                {
+                    __syncthreads ();
+                    smem[tid] = row[i] * row[j];
+                    __syncthreads ();
+
+                    reduce<CTA_SIZE>(smem);
+
+                    if (tid == 0)
+                        gbuf.ptr (shift++)[blockIdx.x + gridDim.x * blockIdx.y] = smem[0];
+                }
+            }
+        }//operator () () const
+    };//struct CombinedCCW
+
+    //@author zhangxaochen
+    __global__ void
+    combinedKernelCCW (const CombinedCCW cs) 
+    {
+        //g_contCorrespCounter = 0; //不行。永远是0
+        cs ();
+    }
+
     struct TranformReduction
     {
       enum
@@ -303,8 +417,8 @@ namespace pcl
     {
       tr ();
     }
-  }
-}
+  }//namespace device
+}//namespace pcl
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -386,6 +500,110 @@ pcl::device::estimateCombined (const Mat33& Rcurr, const float3& tcurr,
         matrixA_host[j * 6 + i] = matrixA_host[i * 6 + j] = value;
     }
 }
+
+
+
+//@author zhangxaochen
+//@brief 比原 estimateCombined 函数增加 ①当前帧contourMsk；②contour权重参数contWeight(>1)
+void
+pcl::device::estimateCombined (const Mat33 &Rcurr, const float3 &tcurr, 
+                               const MapArr &vmap_curr, const MapArr &nmap_curr, 
+                               const Mat33 &Rprev_inv, const float3 &tprev, const Intr &intr,
+                               const MapArr &vmap_g_prev, const MapArr &nmap_g_prev, 
+                               float distThres, float angleThres,
+                               DeviceArray2D<float_type> &gbuf, DeviceArray<float_type> &mbuf,
+                               float_type *matrixA_host, float_type *vectorB_host,
+                               DeviceArray2D<unsigned char> &contourMsk, float contWeight)
+{
+  int cols = vmap_curr.cols ();
+  int rows = vmap_curr.rows () / 3;
+
+  //zhangxaochen:
+  assert(contWeight > 0);
+  pcl::device::CombinedCCW cs; 
+  cs.contWeight = contWeight;
+  cs.contourMsk = contourMsk;
+
+  cs.Rcurr = Rcurr;
+  cs.tcurr = tcurr;
+
+  cs.vmap_curr = vmap_curr;
+  cs.nmap_curr = nmap_curr;
+
+  cs.Rprev_inv = Rprev_inv;
+  cs.tprev = tprev;
+
+  cs.intr = intr;
+
+  cs.vmap_g_prev = vmap_g_prev;
+  cs.nmap_g_prev = nmap_g_prev;
+
+  cs.distThres = distThres;
+  cs.angleThres = angleThres;
+
+  cs.cols = cols;
+  cs.rows = rows;
+  //sunguofei
+  cs.rows_contour = 0;
+
+//////////////////////////////
+
+  dim3 block (Combined::CTA_SIZE_X, Combined::CTA_SIZE_Y);
+  dim3 grid (1, 1, 1);
+  grid.x = divUp (cols, block.x);
+  grid.y = divUp (rows, block.y);
+
+  mbuf.create (TranformReduction::TOTAL);
+  if (gbuf.rows () != TranformReduction::TOTAL || gbuf.cols () < (int)(grid.x * grid.y))
+    gbuf.create (TranformReduction::TOTAL, grid.x * grid.y);
+
+  cs.gbuf = gbuf;
+
+  //g_contCorrespCounter = 0; //半错, 无法重新初始化归零，持续递增
+                              //不应在 host code 操作。见我的问答：http://stackoverflow.com/questions/19185484/passing-value-from-device-memory-as-kernel-parameter-in-cuda
+                            //首次迭代值 299, 可认作总量？
+  int contCorrespCounter = 0;
+
+  cudaMemcpyToSymbol(g_contCorrespCounter, &contCorrespCounter, sizeof(int)); //挂了, invalid device symbol
+  //cudaMemset(&g_contCorrespCounter, 0, sizeof(int)); //挂了, invalid argument
+
+  cudaMemcpyFromSymbol(&contCorrespCounter, g_contCorrespCounter, sizeof(int));
+  printf("g_contCorrespCounter~: %d\n", contCorrespCounter);
+
+  combinedKernelCCW<<<grid, block>>>(cs);
+
+  //sync(); //不必
+  //cudaMemcpy(&contCorrespCounter, &g_contCorrespCounter, sizeof(int), cudaMemcpyDeviceToHost); //错。必须用 cudaMemcpyFromSymbol
+  cudaMemcpyFromSymbol(&contCorrespCounter, g_contCorrespCounter, sizeof(int));
+  printf("g_contCorrespCounter: %d\n", contCorrespCounter);
+  cudaSafeCall ( cudaGetLastError () );
+  //cudaSafeCall(cudaDeviceSynchronize());
+
+  //printFuncAttrib(combinedKernel);
+
+  TranformReduction tr;
+  tr.gbuf = gbuf;
+  tr.length = grid.x * grid.y;
+  tr.output = mbuf;
+
+  TransformEstimatorKernel2<<<TranformReduction::TOTAL, TranformReduction::CTA_SIZE>>>(tr);
+  cudaSafeCall (cudaGetLastError ());
+  cudaSafeCall (cudaDeviceSynchronize ());
+
+  float_type host_data[TranformReduction::TOTAL];
+  mbuf.download (host_data);
+
+  int shift = 0;
+  for (int i = 0; i < 6; ++i)  //rows
+    for (int j = i; j < 7; ++j)    // cols + b
+    {
+      float_type value = host_data[shift++];
+      if (j == 6)       // vector b
+        vectorB_host[i] = value;
+      else
+        matrixA_host[j * 6 + i] = matrixA_host[i * 6 + j] = value;
+    }
+}//estimateCombin (CCW)
 
 
 //sunguofei

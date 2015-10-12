@@ -207,6 +207,12 @@ namespace pcl
         void disableIcp();
 
         //zhangxaochen:
+        bool icp_orig_;// = true;          //default， kinfu 原来的实现
+        bool icp_sgf_cpu_;// = false;      //孙国飞 cpu 上 kdTreeFlann 查找 contour-cue 对应点实现
+        
+        bool icp_cc_inc_weight;// = false; //仅增加 curr-depth 上找到的 contour-cue 的权重，仍用原 kinfu 对应点 search 算法
+        float contWeight_;// = 1;
+
         zc::MaskMap getContMask(){
             return contMsk_;
         }
