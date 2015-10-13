@@ -5,6 +5,8 @@
 #include <pcl/common/time.h>
 
 namespace zc{
+using namespace cv;
+
 namespace test{
     void testInpaintImplCpuAndGpu(const DepthMap &src, bool debugDraw = false);
 
@@ -27,6 +29,12 @@ public:
       double getTimeMicros();
 
 };//class ScopeTimeMillis
+
+//@brief normal-map(SOA内存结构)转换为opencv-Mat, 用于调试显示. 策略改进过程见: http://www.evernote.com/l/AY8AtmAVfmZBvKb96aRiC4VW_wQp59sAUzE/
+//@param nmap, 法向图, 必须为 SOA 内存结构(因为用到device::convert)
+//@param debugDraw, 是否 imshow
+//@return cv::Mat of type CV_32FC3
+Mat nmap2rgb(const MapArr &nmap, bool debugDraw = false);
 
 }//namespace zc
 

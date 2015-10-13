@@ -79,6 +79,12 @@ namespace pcl
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pcl::gpu::KinfuTracker::KinfuTracker (int rows, int cols) : rows_(rows), cols_(cols), global_time_(0), max_icp_distance_(0), integration_metric_threshold_(0.f), disable_icp_(false)
 {
+  //zhangxaochen:
+  icp_orig_ = true;
+  icp_sgf_cpu_ = false;
+  icp_cc_inc_weight = false;
+  contWeight_ = 1;
+
   const Vector3f volume_size = Vector3f::Constant (VOLUME_SIZE);
   const Vector3i volume_resolution(VOLUME_X, VOLUME_Y, VOLUME_Z);
    
@@ -455,6 +461,18 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         ++global_time_;
         return (false);
       }
+
+      //zhangxaochen: 调试绘制 nmaps_curr_, nmaps_g_prev_, 后者可能有错
+      //DeviceArray2D<NormalType> nmap2d; //等价于 float8
+      //getLastFrameNormals(nmap2d);
+      ////cout<<nmap2d.ptr(0)[0]<<endl; //×, .ptr 是 device func.
+      //Mat nmaps_curr_host(nmap2d.rows(), nmap2d.cols(), CV_32FC3);
+      //cout<<"nmap2d.step: "<<nmap2d.step()<<", "<<nmap2d.colsBytes()
+      //    <<", "<<nmap2d.rows()<<"x"<<nmap2d.cols()<<"; "<<nmap2d.elem_step()<<endl; //20480, 20480, 480x640; 640
+      //nmap2d.download(nmaps_curr_host.data, nmaps_curr_host.cols * nmaps_curr_host.elemSize()); //大小不合适, invalid pitch argument
+      zc::nmap2rgb(nmaps_g_prev_[0], true);
+
+
 
       ///////////////////////////////////////////////////////////////////////////////////////////
       // Iterative Closest Point
