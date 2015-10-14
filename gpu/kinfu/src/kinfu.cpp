@@ -216,6 +216,10 @@ pcl::gpu::KinfuTracker::allocateBufffers (int rows, int cols)
   vmaps_g_prev_.resize (LEVELS);
   nmaps_g_prev_.resize (LEVELS);
 
+  //sunguofei
+  depths_prev_.resize(LEVELS);
+  nmaps_g_prev_contourcue.resize(LEVELS);
+
   vmaps_curr_.resize (LEVELS);
   nmaps_curr_.resize (LEVELS);
 
@@ -227,6 +231,10 @@ pcl::gpu::KinfuTracker::allocateBufffers (int rows, int cols)
     int pyr_cols = cols >> i;
 
     depths_curr_[i].create (pyr_rows, pyr_cols);
+
+    //sunguofei
+    depths_prev_[i].create(pyr_rows,pyr_cols);
+    nmaps_g_prev_contourcue[i].create(pyr_rows*3,pyr_cols);
 
     vmaps_g_curr_[i].create (pyr_rows*3, pyr_cols);
     nmaps_g_curr_[i].create (pyr_rows*3, pyr_cols);
@@ -332,8 +340,24 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           //device::createNMap(vmaps_curr_[i], nmaps_curr_[i]);
           computeNormalsEigen (vmaps_curr_[i], nmaps_curr_[i]);
         }
+        Mat depth_prev_host;
         if (global_time_!=0)
         {
+            MapArr prev_normals;
+            {
+//             depth_prev_host=Mat::zeros(depths_prev_[0].rows(),depths_prev_[0].cols(),CV_16U);
+//             depths_prev_[0].download(depth_prev_host.data,depth_prev_host.cols*depth_prev_host.elemSize());
+//             Mat grandient_x,grandient_y;
+//             Sobel(depth_prev_host,grandient_x,CV_32F,1,0,7);
+//             Sobel(depth_prev_host,grandient_y,CV_32F,0,1,7);
+            //device::computeNormalsContourcue(depth_prev_host,grandient_x,grandient_y,prev_normals);
+//             double _min,_max;
+//             minMaxLoc(depth_prev_host,&_min,&_max);
+//             cout<<"min--------  "<<_min<<endl
+//                 <<"max--------  "<<_max<<endl;
+//             depth_prev_host.convertTo(depth_prev_host,CV_8U,255.0/9000,0);
+//             imshow("previous depth",depth_prev_host);
+            }
             {
             //ScopeTimeMicroSec time("|-sgf-computeCandidate"); //1ms
             //device::computeCandidate(nmaps_g_prev_[0],vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.26);
@@ -465,6 +489,17 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
         for (int i = 0; i < LEVELS; ++i)
           device::tranformMaps (vmaps_curr_[i], nmaps_curr_[i], device_Rcam, device_tcam, vmaps_g_prev_[i], nmaps_g_prev_[i]);
+        
+        //sunguofei
+        {
+            //根据得到的世界坐标系下的上一帧的vmap，计算相机姿态下的深度图
+            device::generateDepth(device_Rcam_inv,device_tcam,vmaps_g_prev_[0],depths_prev_[0]);
+            //这里按照contour cue论文的方法再修补一下深度图
+            zc::inpaintGpu(depths_prev_[0], depths_prev_[0]);
+            pcl::device::sync();
+        }
+        for (int i = 1; i < LEVELS; ++i)
+            device::pyrDown (depths_prev_[i-1], depths_prev_[i]);
 
         //zhangxaochen: 【注释掉】第一帧就不该有 prev
         //Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
@@ -846,6 +881,18 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
     }
     pcl::device::sync ();
   }
+
+  //sunguofei
+  {
+      //根据得到的世界坐标系下的上一帧的vmap，计算相机姿态下的深度图
+      device::generateDepth(device_Rcurr_inv,device_tcurr,vmaps_g_prev_[0],depths_prev_[0]);
+      //这里按照contour cue论文的方法再修补一下深度图
+      zc::inpaintGpu(depths_prev_[0], depths_prev_[0]);
+      pcl::device::sync();
+  }
+  for (int i = 1; i < LEVELS; ++i)
+      device::pyrDown (depths_prev_[i-1], depths_prev_[i]);
+
 
   ++global_time_;
   return (true);

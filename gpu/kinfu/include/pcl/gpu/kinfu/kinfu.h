@@ -288,7 +288,13 @@ namespace pcl
         std::vector<MapArr> vmaps_g_prev_;
         /** \brief Normal maps pyramid for previous frame in global coordinate space. */
         std::vector<MapArr> nmaps_g_prev_;
-                
+
+        //sunguofei
+        /** \brief Normal maps pyramid for previous frame in global coordinate space. Another implement */
+        std::vector<MapArr> nmaps_g_prev_contourcue;
+        /** \brief previous Depth pyramid. */
+        std::vector<DepthMap> depths_prev_;        
+
         /** \brief Vertex maps pyramid for current frame in current coordinate space. */
         std::vector<MapArr> vmaps_curr_;
         /** \brief Normal maps pyramid for current frame in current coordinate space. */

@@ -478,10 +478,18 @@ namespace pcl
     void computeCandidate(const MapArr& nmap,const MapArr& vmap,float t_x,float t_y,float t_z, ContourMask& dst,double thresh);
 
     /** \brief inpainting the depth map
-     * \param[in] depth map
-     * \param[out] inpainted depth map
-     */
+      * \param[in] depth map
+      * \param[out] inpainted depth map
+      */
     void inpaint(const DepthMap& src,DepthMap& dst);
+
+    /** \brief compute normals of the depth map
+      * \param[in] depth map
+      * \param[in] sobel grandient x of depth map
+      * \param[in] sobel grandient y of depth map
+      * \param[out] computed normal map
+      */
+    void computeNormalsContourcue(const Intr& intr, const DepthMap& depth, const MapArr& grandient_x, const MapArr& grandient_y, MapArr& nmap);
   }
 }
 

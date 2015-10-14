@@ -176,7 +176,7 @@ namespace pcl
     //sunguofei---contour cue
 
     __global__ void
-    computeContoursKernel(PtrStepSz<ushort> src, PtrStepSz<_uchar> dst, int thresh)
+    computeContoursKernel(const PtrStepSz<ushort>& src, PtrStepSz<_uchar> dst, int thresh)
     {
         int x = blockIdx.x * blockDim.x + threadIdx.x;
         int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -201,7 +201,7 @@ namespace pcl
 	}
 
     __global__ void
-    computeCandidateKernel(PtrStepSz<float> nmap,PtrStepSz<float> vmap,float t_x,float t_y,float t_z,PtrStepSz<_uchar> dst,double thresh)
+    computeCandidateKernel(const PtrStepSz<float>& nmap,const PtrStepSz<float>& vmap,float t_x,float t_y,float t_z,PtrStepSz<_uchar> dst,double thresh)
     {
         int x = blockIdx.x * blockDim.x + threadIdx.x;
 		int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -221,7 +221,7 @@ namespace pcl
     }
 
     __global__ void
-    inpaintKernel(PtrStepSz<ushort> src,PtrStepSz<ushort> dst)
+    inpaintKernel(const PtrStepSz<ushort>& src,PtrStepSz<ushort> dst)
     {
         int x=blockIdx.x*blockDim.x+threadIdx.x;
         if(x<dst.rows)
@@ -254,6 +254,45 @@ namespace pcl
                     dst.ptr(x)[y]=0;
                     flag=false;
                 }
+            }
+        }
+    }
+
+    __global__ void
+    computeNormalsContourcueKernal(const Intr& intr, const PtrStepSz<ushort>& src,const PtrStepSz<float>& grandient_x,const PtrStepSz<float>& grandient_y,PtrStepSz<ushort> dst)
+    {
+        int x = blockIdx.x * blockDim.x + threadIdx.x;
+		int y = blockIdx.y * blockDim.y + threadIdx.y;
+        if (x<src.cols && y<src.rows)
+        {
+            float dx,dy,dz;
+            dz = -1;
+            //ÏÈ¼ÆËãÄæ¾ØÕó
+            float fx = intr.fx,fy = intr.fy,cx = intr.cx,cy = intr.cy;
+            int depth = src.ptr(y)[x];
+            float du = grandient_x.ptr(y)[x],dv=grandient_y.ptr(y)[x];
+            float m00 = 1.0/fx*(depth+(x-cx)*du),
+                m01 = 1.0/fx*(x-cx)*dv,
+                m10 = 1.0/fy*(y-cy)*du,
+                m11 = 1.0/fy*(depth+(y-cy)*dv);
+            float det = m00*m11-m01*m10;
+            if(abs(det) < 1e-2)
+            {
+                dx = 0;dy = 0;
+            }
+            else
+            {
+                float m00_inv = m11/det,
+                    m01_inv = -m01/det,
+                    m10_inv = -m10/det,
+                    m11_inv = m00/det;
+                dx = du*m00_inv+dv*m10_inv;
+                dy = du*m01_inv+dv*m11_inv;
+                //normalize
+                float norm=sqrt(dx*dx+dy*dy+dz*dz);
+                dx = dx/norm;
+                dy = dy/norm;
+                dz = dz/norm;
             }
         }
     }
@@ -334,4 +373,16 @@ void pcl::device::inpaint(const DepthMap& src,DepthMap& dst)
   inpaintKernel<<<grid, block>>>(src, dst);
 
   cudaSafeCall ( cudaGetLastError () );
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void pcl::device::computeNormalsContourcue(const Intr& intr, const DepthMap& depth,const MapArr& grandient_x, const MapArr& grandient_y, MapArr& nmap)
+{
+    nmap.create(depth.rows()*3,depth.cols());
+    dim3 block (32, 8);
+    dim3 grid (divUp (depth.cols (), block.x), divUp (depth.rows (), block.y));
+
+    computeNormalsContourcueKernal<<<grid,block>>>(intr,depth,grandient_x,grandient_y,nmap);
+
+    cudaSafeCall ( cudaGetLastError () );
 }
