@@ -458,6 +458,10 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         for (int i = 0; i < LEVELS; ++i)
           device::tranformMaps (vmaps_curr_[i], nmaps_curr_[i], device_Rcam, device_tcam, vmaps_g_prev_[i], nmaps_g_prev_[i]);
 
+        //zhangxaochen:
+        zc::nmap2rgb(nmaps_g_prev_[0], true);
+        computeNormalsEigen(vmaps_g_prev_[0], nmap_g_prev_eigen_);
+
         ++global_time_;
         return (false);
       }
@@ -472,7 +476,11 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       //nmap2d.download(nmaps_curr_host.data, nmaps_curr_host.cols * nmaps_curr_host.elemSize()); //大小不合适, invalid pitch argument
       zc::nmap2rgb(nmaps_g_prev_[0], true);
 
-
+      //(raycast->gDepth->)(前面略。因为那是 kinfu_app的方式，raycast可以直接得到vmap) vmap_g->nmap_g
+      //MapArr nmap_g_prev_eigen;
+      computeNormalsEigen(vmaps_g_prev_[0], nmap_g_prev_eigen_);
+      //Mat nmap_g_prev_eigen_host = zc::nmap2rgb(nmap_g_prev_eigen);
+      //imshow("nmap_g_prev_eigen_host", nmap_g_prev_eigen_host);
 
       ///////////////////////////////////////////////////////////////////////////////////////////
       // Iterative Closest Point

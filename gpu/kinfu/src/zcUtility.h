@@ -34,7 +34,7 @@ public:
 //@param nmap, 法向图, 必须为 SOA 内存结构(因为用到device::convert)
 //@param debugDraw, 是否 imshow
 //@return cv::Mat of type CV_32FC3
-Mat nmap2rgb(const MapArr &nmap, bool debugDraw = false);
+PCL_EXPORTS Mat nmap2rgb(const MapArr &nmap, bool debugDraw = false);
 
 }//namespace zc
 

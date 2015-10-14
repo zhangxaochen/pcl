@@ -221,6 +221,11 @@ namespace pcl
             return contCorrespMsk_;
         }
 
+        //zhangxaochen:
+        DeviceArray2D<float> getNmapGprevEigen(){
+            return nmap_g_prev_eigen_;
+        }
+
       private:
         
         /** \brief Number of pyramid levels */
@@ -324,7 +329,7 @@ namespace pcl
         //zhangxaochen:
         zc::MaskMap contMsk_;
         zc::MaskMap contCorrespMsk_; //contour correspondence candidates
-
+        MapArr nmap_g_prev_eigen_;
 public:
 EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

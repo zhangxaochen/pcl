@@ -79,6 +79,8 @@
 //zhangxaochen:
 //using namespace cv;
 #include "contour_cue_impl.h"
+#include "zcUtility.h"
+
 //#include "video_recorder.h"
 #endif
 typedef pcl::ScopeTime ScopeTimeT;
@@ -592,7 +594,7 @@ struct SceneCloudView
         {
           visualization::PointCloudColorHandlerRGBCloud<PointNormal> rgb(combined_ptr_, point_colors_ptr_);
           cloud_viewer_->addPointCloud<PointNormal> (combined_ptr_, rgb, "Cloud");
-          cloud_viewer_->addPointCloudNormals<PointNormal>(combined_ptr_, 50);
+          cloud_viewer_->addPointCloudNormals<PointNormal>(combined_ptr_, 5); //原来 level==50
         }
         else
         {
@@ -1203,25 +1205,6 @@ struct KinFuApp
 
             using namespace cv;
             Mat dmat = imread(fn, IMREAD_UNCHANGED);
-            Mat dmat8u;
-            dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
-            putText(dmat8u, "dmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
-            putText(dmat8u, "fid: "+to_string((long long) i), Point(0, 50), FONT_HERSHEY_PLAIN, 2, 255);
-            //imshow("dmat8u", dmat8u);
-
-            Mat inpDmat = zc::inpaintCpu<ushort>(dmat),
-                inpDmat8u,
-                contMskShow;
-            inpDmat.convertTo(inpDmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
-            contMskShow = inpDmat8u.clone();
-
-            putText(inpDmat8u, "inpDmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
-            //imshow("inpDmat8u", inpDmat8u);
-            //dmat8u.push_back(inpDmat8u); //==vconcat
-            hconcat(dmat8u, inpDmat8u, dmat8u);
-            //pyrDown(dmat8u, dmat8u);
-            resize(dmat8u, dmat8u, Size(dmat8u.cols/2, dmat8u.rows/2));
-            imshow("dmat8u", dmat8u);
 
             depth_.cols = dmat.cols;
             depth_.rows = dmat.rows;
@@ -1234,25 +1217,53 @@ struct KinFuApp
             catch (const std::bad_alloc& /*e*/) { cout << "Bad alloc" << endl; break; }
             catch (const std::exception& /*e*/) { cout << "Exception" << endl; break; }
 
-            zc::MaskMap contMskDevice = kinfu_.getContMask();
-            Mat contMskHost(contMskDevice.rows(), contMskDevice.cols(), CV_8UC1);
-            //contMskDevice.download(contMskHost.data, contMskDevice.step()); //step -> 1024, 应为 640. 不知原因
-            contMskDevice.download(contMskHost.data, contMskDevice.cols());
-            contMskShow.setTo(UCHAR_MAX, contMskHost);
-            imshow("contMskShow", contMskShow);
-            printf("zc:contMskHost: %d\n", countNonZero(contMskHost));
+            if(this->debug_level1_){
+                Mat dmat8u;
+                dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+                putText(dmat8u, "dmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
+                putText(dmat8u, "fid: "+to_string((long long) i), Point(0, 50), FONT_HERSHEY_PLAIN, 2, 255);
+                //imshow("dmat8u", dmat8u);
 
-            //contour-correspondence-candidate mask debug show
-            zc::MaskMap cccDevice = kinfu_.getContCorrespMask();
-            if(cccDevice.cols() > 0 && cccDevice.rows() > 0){
-                Mat cccHost(cccDevice.rows(), cccDevice.cols(), CV_8UC1);
-                cccDevice.download(cccHost.data, cccHost.cols * cccHost.elemSize());
-                imshow("cccHost", cccHost);
+                Mat inpDmat = zc::inpaintCpu<ushort>(dmat),
+                    inpDmat8u,
+                    contMskShow;
+                inpDmat.convertTo(inpDmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+                contMskShow = inpDmat8u.clone();
+
+                putText(inpDmat8u, "inpDmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
+                //imshow("inpDmat8u", inpDmat8u);
+                //dmat8u.push_back(inpDmat8u); //==vconcat
+                hconcat(dmat8u, inpDmat8u, dmat8u);
+                //pyrDown(dmat8u, dmat8u);
+                resize(dmat8u, dmat8u, Size(dmat8u.cols/2, dmat8u.rows/2));
+                imshow("dmat8u", dmat8u);
+
+                zc::MaskMap contMskDevice = kinfu_.getContMask();
+                Mat contMskHost(contMskDevice.rows(), contMskDevice.cols(), CV_8UC1);
+                //contMskDevice.download(contMskHost.data, contMskDevice.step()); //step -> 1024, 应为 640. 不知原因
+                contMskDevice.download(contMskHost.data, contMskDevice.cols());
+                contMskShow.setTo(UCHAR_MAX, contMskHost);
+                imshow("contMskShow", contMskShow);
+                printf("zc:contMskHost: %d\n", countNonZero(contMskHost));
+
+                //contour-correspondence-candidate mask debug show
+                zc::MaskMap cccDevice = kinfu_.getContCorrespMask();
+                if(cccDevice.cols() > 0 && cccDevice.rows() > 0){
+                    Mat cccHost(cccDevice.rows(), cccDevice.cols(), CV_8UC1);
+                    cccDevice.download(cccHost.data, cccHost.cols * cccHost.elemSize());
+                    imshow("cccHost", cccHost);
+                }
+
+                DeviceArray2D<float> nmap_g_prev_eigen = kinfu_.getNmapGprevEigen();
+                if(nmap_g_prev_eigen.cols() > 0){ //若有数据
+                    Mat nmap_g_prev_eigen_host = zc::nmap2rgb(nmap_g_prev_eigen);
+                    imshow("nmap_g_prev_eigen_host", nmap_g_prev_eigen_host);
+                }
+
+                int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
+                if(key==27) //Esc
+                    break;
             }
-
-            int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
-            if(key==27) //Esc
-                break;
         }//for-pngFnames_
     }//else //this->png_source_ == true
 #endif //HAVE_OPENCV
@@ -1371,6 +1382,7 @@ struct KinFuApp
   bool hasRtCsv_; //是否（在 pngDir_）存在 {R, t} csv 描述文件
   bool csv_rt_hint_; //是否用 csv {R, t} 做初值？（不一定用）
   bool show_gdepth_; //show-generated-depth. 是否显示当前时刻 (模型, 视角) 对应的深度图
+  bool debug_level1_; //是否download并显示一些中间调试窗口？运行时效率相关
 
   vector<double> csvRtCurrRow_; //csv 文件读到的当前一行
   //string icp_impl_str_;
@@ -1625,6 +1637,7 @@ main (int argc, char* argv[])
 
   //启用 hint(目前 png_dir -> syntheticRT.txt) 做 ICP 初值
   app.csv_rt_hint_ = pc::find_switch (argc, argv, "-csv_rt_hint");
+  app.debug_level1_ = pc::find_switch(argc, argv, "-dbg1");
 
   if(pc::find_switch(argc, argv, "--gen-depth") || pc::find_switch(argc, argv, "-gd")){
       app.show_gdepth_ = true; //似乎多余。暂时放着
