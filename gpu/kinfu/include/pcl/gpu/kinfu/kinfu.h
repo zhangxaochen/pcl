@@ -330,6 +330,7 @@ namespace pcl
         zc::MaskMap contMsk_;
         zc::MaskMap contCorrespMsk_; //contour correspondence candidates
         MapArr nmap_g_prev_eigen_;
+        RayCaster::Ptr pRaycaster_;
 public:
 EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

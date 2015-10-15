@@ -8,8 +8,13 @@ namespace zc{
 using namespace cv;
 
 namespace test{
+    //@brief 测试 inpaint 算法实现正确性：1. CPU & GPU 结果一致; 2. GPU 更高效
     void testInpaintImplCpuAndGpu(const DepthMap &src, bool debugDraw = false);
 
+    //@brief 测试 vmap 是否正确, 通过 nmap opencv 绘制观察. 防止某些 vmap 坐标转换 etc. 之后出错.
+    //@param[in] vmap, vertex map
+    //@param[in] winName, opencv imshow window name
+    void testVmap(const MapArr &vmap, const char *winName);
 }//namespace test
 
 class ScopeTimeMicroSec : public StopWatch{

@@ -14,6 +14,7 @@ using namespace std;
 namespace zc{
     using namespace cv;
     using namespace pcl;
+    using namespace pcl::device;
 
 #define INP_V1 0
 #if !INP_V1
@@ -123,6 +124,12 @@ void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const Map
 //@brief test basic operations with pcl-cuda, since error occured when impl. *contourCorrespCandidate*; see: http://www.evernote.com/l/AY82PvIZaq9MAYJsLwSy_b43fCV0DwdcDI0/
 void testPclCuda(DepthMap &o1, MapArr &o2);
 
+//@brief Perform affine transform of vmap (part of @tranformMaps)
+//@param[in] vmap_src source vertex map
+//@param[in] Rmat rotation mat
+//@param[in] tvec translation
+//@param[out] vmap_dst destination vertex map
+void transformVmap(const MapArr &vmap_src, const Mat33 &Rmat, const float3 &tvec, MapArr &vmap_dst);
 
 }//namespace zc
 

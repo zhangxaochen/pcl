@@ -58,6 +58,8 @@ using namespace cv;
 //zhangxaochen:
 #include "zcUtility.h"
 using zc::ScopeTimeMicroSec;
+using Eigen::Affine3f;
+using Eigen::Matrix3f;
 
 using namespace std;
 using namespace pcl::device;
@@ -84,6 +86,7 @@ pcl::gpu::KinfuTracker::KinfuTracker (int rows, int cols) : rows_(rows), cols_(c
   icp_sgf_cpu_ = false;
   icp_cc_inc_weight = false;
   contWeight_ = 1;
+  pRaycaster_ = RayCaster::Ptr(new RayCaster(rows_, cols_, KINFU_DEFAULT_DEPTH_FOCAL_X, KINFU_DEFAULT_DEPTH_FOCAL_Y));
 
   const Vector3f volume_size = Vector3f::Constant (VOLUME_SIZE);
   const Vector3i volume_resolution(VOLUME_X, VOLUME_Y, VOLUME_Z);
@@ -304,7 +307,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         if (global_time_ != 0){
             {
             //ScopeTimeMicroSec time("|-zc-contourCorrespCandidate"); //1ms
-            zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
+            //zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
+            zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmap_g_prev_eigen_, 75, contCorrespMsk_);
             }
         }
         }//ScopeTimeMicroSec time "zc..."
@@ -459,7 +463,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           device::tranformMaps (vmaps_curr_[i], nmaps_curr_[i], device_Rcam, device_tcam, vmaps_g_prev_[i], nmaps_g_prev_[i]);
 
         //zhangxaochen:
-        zc::nmap2rgb(nmaps_g_prev_[0], true);
+        Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
+        imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
         computeNormalsEigen(vmaps_g_prev_[0], nmap_g_prev_eigen_);
 
         ++global_time_;
@@ -474,11 +479,43 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       //cout<<"nmap2d.step: "<<nmap2d.step()<<", "<<nmap2d.colsBytes()
       //    <<", "<<nmap2d.rows()<<"x"<<nmap2d.cols()<<"; "<<nmap2d.elem_step()<<endl; //20480, 20480, 480x640; 640
       //nmap2d.download(nmaps_curr_host.data, nmaps_curr_host.cols * nmaps_curr_host.elemSize()); //大小不合适, invalid pitch argument
-      zc::nmap2rgb(nmaps_g_prev_[0], true);
+      Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
+      imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
 
-      //(raycast->gDepth->)(前面略。因为那是 kinfu_app的方式，raycast可以直接得到vmap) vmap_g->nmap_g
-      //MapArr nmap_g_prev_eigen;
-      computeNormalsEigen(vmaps_g_prev_[0], nmap_g_prev_eigen_);
+      //(raycast->gDepth->)(不用raycast直接得到的vmap) ->inpaintDmat ->vmap_g->nmap_g
+      Affine3f prevPose = this->getCameraPose();
+      pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
+      DepthMap genDepthPrev, genDepthPrevInp;
+      pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
+      Mat genDepthPrevHost(genDepthPrev.rows(), genDepthPrev.cols(), CV_16UC1);
+      genDepthPrev.download(genDepthPrevHost.data, genDepthPrev.colsBytes());
+      Mat genDepthPrevHost8u;
+      genDepthPrevHost.convertTo(genDepthPrevHost8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+      imshow("genDepthPrevHost8u", genDepthPrevHost8u);
+
+      zc::inpaintGpu(genDepthPrev, genDepthPrevInp); //i-1 深度图修补 inpaint, 用原对象内存
+      Mat genDepthPrevInpHost(genDepthPrevInp.rows(), genDepthPrevInp.cols(), CV_16UC1);
+      genDepthPrevInp.download(genDepthPrevInpHost.data, genDepthPrevInp.colsBytes()); //.step()=1536 与 .colsBytes()=1280
+      Mat genDepthPrevInpHost8u;
+      genDepthPrevInpHost.convertTo(genDepthPrevInpHost8u, CV_8UC1, 1*UCHAR_MAX/1e4);
+      imshow("genDepthPrevInpHost8u", genDepthPrevInpHost8u);
+
+      MapArr vmap_prev_inp; //inpainted
+      device::createVMap(intr(0), genDepthPrevInp, vmap_prev_inp); //i-1 相机坐标系点云
+      //测试 inp-vmap 是否正确, 可能有错！
+      //zc::test::testVmap(vmap_prev_inp, "vmap_prev_inp"); //OK, http://i.stack.imgur.com/HQodq.png
+
+      Matrix3f R = prevPose.linear(); //要 rm(row-major)吗？不确定，未解决
+      Vector3f t = prevPose.translation();
+
+      const Mat33 &device_R = device_cast<const Mat33>(R);
+      const float3 &device_t = device_cast<const float3>(t);
+
+      MapArr vmap_g_prev_inp;
+      zc::transformVmap(vmap_prev_inp, device_R, device_t, vmap_g_prev_inp);
+      //zc::test::testVmap(vmap_g_prev_inp, "vmap_g_prev_inp"); //OK, ≌nmap_g_prev_eigen_
+
+      computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_eigen_);
       //Mat nmap_g_prev_eigen_host = zc::nmap2rgb(nmap_g_prev_eigen);
       //imshow("nmap_g_prev_eigen_host", nmap_g_prev_eigen_host);
 

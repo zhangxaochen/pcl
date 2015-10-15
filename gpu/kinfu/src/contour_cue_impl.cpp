@@ -43,6 +43,13 @@ void zc::test::testInpaintImplCpuAndGpu(const DepthMap &src, bool debugDraw /*= 
     }
 }//testInpaintImplCpuAndGpu
 
+void zc::test::testVmap( const MapArr &vmap, const char *winName ){
+    MapArr nmap;
+    computeNormalsEigen(vmap, nmap);
+    Mat nmap_host = zc::nmap2rgb(nmap, false);
+    imshow(winName, nmap_host);
+}
+
 double zc::ScopeTimeMicroSec::getTimeMicros(){
     boost::posix_time::ptime end_time = boost::posix_time::microsec_clock::local_time();
     return static_cast<double>((end_time - start_time_).total_microseconds());

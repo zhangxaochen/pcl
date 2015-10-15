@@ -233,6 +233,46 @@ void testPclCuda(DepthMap &o1, MapArr &o2){
     cudaSafeCall(cudaGetLastError());
 }//testPclCuda
 
+__global__ void
+transformVmapKernel(int rows, int cols, const PtrStep<float> vmap_src, const Mat33 Rmat, const float3 tvec, PtrStepSz<float> vmap_dst){
+    int x = threadIdx.x + blockIdx.x * blockDim.x,
+        y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    const float qnan = pcl::device::numeric_limits<float>::quiet_NaN();
+    if(!(x < cols && y < rows))
+        return;
+
+    float3 vsrc, vdst = make_float3(qnan, qnan, qnan);
+    vsrc.x = vmap_src.ptr(y)[x];
+
+    if(!isnan(vsrc.x)){
+        vsrc.y = vmap_src.ptr(y + rows)[x];
+        vsrc.z = vmap_src.ptr(y + 2 * rows)[x];
+
+        vdst = Rmat * vsrc + tvec;
+
+        vmap_dst.ptr (y + rows)[x] = vdst.y;
+        vmap_dst.ptr (y + 2 * rows)[x] = vdst.z;
+    }
+
+    //确实应放在这里！无论是否 isnan(vdst.x)
+    vmap_dst.ptr(y)[x] = vdst.x;
+}//transformVmapKernel
+
+void transformVmap( const MapArr &vmap_src, const Mat33 &Rmat, const float3 &tvec, MapArr &vmap_dst ){
+    int cols = vmap_src.cols(),
+        rows = vmap_src.rows() / 3;
+
+    vmap_dst.create(rows * 3, cols);
+    
+    dim3 block(32, 8);
+    dim3 grid(divUp(cols, block.x), divUp(rows, block.y));
+
+    transformVmapKernel<<<grid, block>>>(rows, cols, vmap_src, Rmat, tvec, vmap_dst);
+
+    cudaSafeCall(cudaGetLastError());
+    cudaSafeCall(cudaDeviceSynchronize());
+}//transformVmap
 
 }//namespace zc
 
