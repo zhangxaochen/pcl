@@ -213,6 +213,13 @@ namespace pcl
         bool icp_cc_inc_weight;// = false; //仅增加 curr-depth 上找到的 contour-cue 的权重，仍用原 kinfu 对应点 search 算法
         float contWeight_;// = 1;
 
+        //@contour-cue impl.: choose a computing normal method when getting CCCandidates
+        //0(default): kinfu-orig.(raycast)
+        //1: volume->[raycast]->genDepth->[zc::inpaint]->inpaintDmat->[createVmap]->vmap_cam_coo->[transformVmap]->vmap_g->[computeNormalsEigen]->nmap_g
+        //2: contour-cue impl.
+        int cc_norm_prev_way_; //= 0;
+                                           //jjj
+
         zc::MaskMap getContMask(){
             return contMsk_;
         }
@@ -222,8 +229,8 @@ namespace pcl
         }
 
         //zhangxaochen:
-        DeviceArray2D<float> getNmapGprevEigen(){
-            return nmap_g_prev_eigen_;
+        DeviceArray2D<float> getNmapGprev(){
+            return nmap_g_prev_choose_;
         }
 
       private:
@@ -329,7 +336,7 @@ namespace pcl
         //zhangxaochen:
         zc::MaskMap contMsk_;
         zc::MaskMap contCorrespMsk_; //contour correspondence candidates
-        MapArr nmap_g_prev_eigen_;
+        MapArr nmap_g_prev_choose_;
         RayCaster::Ptr pRaycaster_;
 public:
 EIGEN_MAKE_ALIGNED_OPERATOR_NEW

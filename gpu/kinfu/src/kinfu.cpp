@@ -86,6 +86,8 @@ pcl::gpu::KinfuTracker::KinfuTracker (int rows, int cols) : rows_(rows), cols_(c
   icp_sgf_cpu_ = false;
   icp_cc_inc_weight = false;
   contWeight_ = 1;
+  cc_norm_prev_way_ = 0;
+
   pRaycaster_ = RayCaster::Ptr(new RayCaster(rows_, cols_, KINFU_DEFAULT_DEPTH_FOCAL_X, KINFU_DEFAULT_DEPTH_FOCAL_Y));
 
   const Vector3f volume_size = Vector3f::Constant (VOLUME_SIZE);
@@ -278,8 +280,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
         //zhangxaochen: test inpaint impl. both CPU & GPU version
         {
-        ScopeTimeMicroSec time("zc-inpaintGpu+computeContours+contourCorrespCandidate"); //3ms, 
-        //加上下面四个 ScopeTimeMicroSec 会导致时间骤增为 15ms
+        //ScopeTimeMicroSec time("zc-inpaintGpu+computeContours+contourCorrespCandidate"); //3ms, 加上下面四个 ScopeTimeMicroSec 会导致时间骤增为 15ms
 
         bool debugDraw = true;
         //zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw); //test OK.
@@ -308,7 +309,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             {
             //ScopeTimeMicroSec time("|-zc-contourCorrespCandidate"); //1ms
             //zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmaps_g_prev_[0], 75, contCorrespMsk_);
-            zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmap_g_prev_eigen_, 75, contCorrespMsk_);
+            zc::contourCorrespCandidate(device_tprev, vmaps_g_prev_[0], nmap_g_prev_choose_, 75, contCorrespMsk_);
             }
         }
         }//ScopeTimeMicroSec time "zc..."
@@ -335,7 +336,10 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         {
             {
             //ScopeTimeMicroSec time("|-sgf-computeCandidate"); //1ms
-            device::computeCandidate(nmaps_g_prev_[0],vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.26);
+            //device::computeCandidate(nmaps_g_prev_[0],vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.26);
+
+            //zhangxaochen: 换成 nmap_g_prev_choose_
+            device::computeCandidate(nmap_g_prev_choose_,vmaps_g_prev_[0],position_camera_x,position_camera_y,position_camera_z,normal_mask,0.26);
             }
         }
         pcl::device::sync ();
@@ -462,62 +466,72 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         for (int i = 0; i < LEVELS; ++i)
           device::tranformMaps (vmaps_curr_[i], nmaps_curr_[i], device_Rcam, device_tcam, vmaps_g_prev_[i], nmaps_g_prev_[i]);
 
-        //zhangxaochen:
-        Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
-        imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
-        computeNormalsEigen(vmaps_g_prev_[0], nmap_g_prev_eigen_);
+        //zhangxaochen: 【注释掉】第一帧就不该有 prev
+        //Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
+        //imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
+        //computeNormalsEigen(vmaps_g_prev_[0], nmap_g_prev_choose_);
+
+        //cc_norm_prev_way_ == 0 or 1, 都可以直接赋值：
+        if(this->cc_norm_prev_way_ == 0 || this->cc_norm_prev_way_ == 1)
+            nmap_g_prev_choose_ = nmaps_g_prev_[0];
 
         ++global_time_;
         return (false);
       }
 
       //zhangxaochen: 调试绘制 nmaps_curr_, nmaps_g_prev_, 后者可能有错
-      //DeviceArray2D<NormalType> nmap2d; //等价于 float8
-      //getLastFrameNormals(nmap2d);
-      ////cout<<nmap2d.ptr(0)[0]<<endl; //×, .ptr 是 device func.
-      //Mat nmaps_curr_host(nmap2d.rows(), nmap2d.cols(), CV_32FC3);
-      //cout<<"nmap2d.step: "<<nmap2d.step()<<", "<<nmap2d.colsBytes()
-      //    <<", "<<nmap2d.rows()<<"x"<<nmap2d.cols()<<"; "<<nmap2d.elem_step()<<endl; //20480, 20480, 480x640; 640
-      //nmap2d.download(nmaps_curr_host.data, nmaps_curr_host.cols * nmaps_curr_host.elemSize()); //大小不合适, invalid pitch argument
-      Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
-      imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
+      //DeviceArray2D<NormalType> nmap2d; //等价于 float8. 
+      //getLastFrameNormals(nmap2d); //opencv难以绘制，要用 pcl::visualizer. 暂放弃
 
-      //(raycast->gDepth->)(不用raycast直接得到的vmap) ->inpaintDmat ->vmap_g->nmap_g
-      Affine3f prevPose = this->getCameraPose();
-      pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
-      DepthMap genDepthPrev, genDepthPrevInp;
-      pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
-      Mat genDepthPrevHost(genDepthPrev.rows(), genDepthPrev.cols(), CV_16UC1);
-      genDepthPrev.download(genDepthPrevHost.data, genDepthPrev.colsBytes());
-      Mat genDepthPrevHost8u;
-      genDepthPrevHost.convertTo(genDepthPrevHost8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
-      imshow("genDepthPrevHost8u", genDepthPrevHost8u);
+      //Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
+      //imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
 
-      zc::inpaintGpu(genDepthPrev, genDepthPrevInp); //i-1 深度图修补 inpaint, 用原对象内存
-      Mat genDepthPrevInpHost(genDepthPrevInp.rows(), genDepthPrevInp.cols(), CV_16UC1);
-      genDepthPrevInp.download(genDepthPrevInpHost.data, genDepthPrevInp.colsBytes()); //.step()=1536 与 .colsBytes()=1280
-      Mat genDepthPrevInpHost8u;
-      genDepthPrevInpHost.convertTo(genDepthPrevInpHost8u, CV_8UC1, 1*UCHAR_MAX/1e4);
-      imshow("genDepthPrevInpHost8u", genDepthPrevInpHost8u);
+      if(this->cc_norm_prev_way_ == 0){ //kinfu-orig.(raycast)
+          nmap_g_prev_choose_ = nmaps_g_prev_[0];
+      }
+      else if(this->cc_norm_prev_way_ == 1){
+          //重新计算 nmap_g 流程：
+          //volume->[raycast]->genDepth->[zc::inpaint]->inpaintDmat->[createVmap]->vmap_cam_coo->[transformVmap]->vmap_g->[computeNormalsEigen]->nmap_g
+          Affine3f prevPose = this->getCameraPose();
+          pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
+          DepthMap genDepthPrev, genDepthPrevInp;
+          pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
+          //Mat genDepthPrevHost(genDepthPrev.rows(), genDepthPrev.cols(), CV_16UC1);
+          //genDepthPrev.download(genDepthPrevHost.data, genDepthPrev.colsBytes());
+          //Mat genDepthPrevHost8u;
+          //genDepthPrevHost.convertTo(genDepthPrevHost8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+          //imshow("genDepthPrevHost8u", genDepthPrevHost8u);
 
-      MapArr vmap_prev_inp; //inpainted
-      device::createVMap(intr(0), genDepthPrevInp, vmap_prev_inp); //i-1 相机坐标系点云
-      //测试 inp-vmap 是否正确, 可能有错！
-      //zc::test::testVmap(vmap_prev_inp, "vmap_prev_inp"); //OK, http://i.stack.imgur.com/HQodq.png
+          zc::inpaintGpu(genDepthPrev, genDepthPrevInp); //i-1 深度图修补 inpaint, 结果见: http://i.stack.imgur.com/vtZ3t.jpg
+          //Mat genDepthPrevInpHost(genDepthPrevInp.rows(), genDepthPrevInp.cols(), CV_16UC1);
+          //genDepthPrevInp.download(genDepthPrevInpHost.data, genDepthPrevInp.colsBytes()); //.step()=1536 与 .colsBytes()=1280
+          //Mat genDepthPrevInpHost8u;
+          //genDepthPrevInpHost.convertTo(genDepthPrevInpHost8u, CV_8UC1, 1*UCHAR_MAX/1e4);
+          //imshow("genDepthPrevInpHost8u", genDepthPrevInpHost8u);
 
-      Matrix3f R = prevPose.linear(); //要 rm(row-major)吗？不确定，未解决
-      Vector3f t = prevPose.translation();
+          MapArr vmap_prev_inp; //inpainted
+          device::createVMap(intr(0), genDepthPrevInp, vmap_prev_inp); //i-1 相机坐标系点云
+          //测试 inp-vmap 是否正确, 可能有错！
+          //zc::test::testVmap(vmap_prev_inp, "vmap_prev_inp"); //OK, http://i.stack.imgur.com/HQodq.png
 
-      const Mat33 &device_R = device_cast<const Mat33>(R);
-      const float3 &device_t = device_cast<const float3>(t);
+          Matrix3f R = prevPose.linear(); //要 rm(row-major)吗？不确定，未解决
+          Vector3f t = prevPose.translation();
 
-      MapArr vmap_g_prev_inp;
-      zc::transformVmap(vmap_prev_inp, device_R, device_t, vmap_g_prev_inp);
-      //zc::test::testVmap(vmap_g_prev_inp, "vmap_g_prev_inp"); //OK, ≌nmap_g_prev_eigen_
+          const Mat33 &device_R = device_cast<const Mat33>(R);
+          const float3 &device_t = device_cast<const float3>(t);
 
-      computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_eigen_);
-      //Mat nmap_g_prev_eigen_host = zc::nmap2rgb(nmap_g_prev_eigen);
-      //imshow("nmap_g_prev_eigen_host", nmap_g_prev_eigen_host);
+          MapArr vmap_g_prev_inp;
+          zc::transformVmap(vmap_prev_inp, device_R, device_t, vmap_g_prev_inp);
+          //zc::test::testVmap(vmap_g_prev_inp, "vmap_g_prev_inp"); //OK, ≌nmap_g_prev_eigen_
+
+          MapArr nmap_g_prev_inp;
+          //computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_choose_); //出错，因前面 nmap_g_prev_choose_ = nmaps_g_prev_[0]; 这里又写其内存
+          computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_inp);
+          nmap_g_prev_choose_ = nmap_g_prev_inp;
+      }
+      else if(this->cc_norm_prev_way_ == 2){
+          //TODO: contour-cue 论文 2.3 Normal 计算方法 @sgf
+      }
 
       ///////////////////////////////////////////////////////////////////////////////////////////
       // Iterative Closest Point

@@ -1254,10 +1254,10 @@ struct KinFuApp
                     imshow("cccHost", cccHost);
                 }
 
-                DeviceArray2D<float> nmap_g_prev_eigen = kinfu_.getNmapGprevEigen();
-                if(nmap_g_prev_eigen.cols() > 0){ //若有数据
-                    Mat nmap_g_prev_eigen_host = zc::nmap2rgb(nmap_g_prev_eigen);
-                    imshow("nmap_g_prev_eigen_host", nmap_g_prev_eigen_host);
+                DeviceArray2D<float> nmap_g_prev = kinfu_.getNmapGprev();
+                if(nmap_g_prev.cols() > 0){ //若有数据
+                    Mat nmap_g_prev_host = zc::nmap2rgb(nmap_g_prev);
+                    imshow("nmap_g_prev_host", nmap_g_prev_host);
                 }
 
                 int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
@@ -1670,6 +1670,14 @@ main (int argc, char* argv[])
       app.kinfu_.contWeight_ = contWeight;
   }
 
+  //@contour-cue impl.: choose a computing normal method when getting CCCandidates
+  //0(default): kinfu-orig.(raycast)
+  //1: volume->[raycast]->genDepth->[zc::inpaint]->inpaintDmat->[createVmap]->vmap_cam_coo->[transformVmap]->vmap_g->[computeNormalsEigen]->nmap_g
+  //2: contour-cue impl.
+  int cc_norm_way = 0;
+  if(pc::parse_argument(argc, argv, "-cc_norm_prev", cc_norm_way) > 0){
+      app.kinfu_.cc_norm_prev_way_ = cc_norm_way;
+  }
 
   //sunguofei
   app.synthetic_RT=R_t;

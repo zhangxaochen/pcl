@@ -70,7 +70,7 @@ cv::Mat zc::nmap2rgb(const MapArr &nmap, bool debugDraw /*= false*/){
     for(size_t i = 0; i < 3; i++){
         //negMsk &= (cn[i] > 0 & cn[i] < magThresh) | (cn[i] < 0 & cn[i] < -magThresh); //标记： 若很负，或微正。逻辑错：万一像素某通道微负，其余很负，则漏标记
         negMsk &= (abs(cn[i]) > magThresh & cn[i] < 0) | (abs(cn[i]) <= magThresh); //标记： 若很负，或绝对值很小
-        cout<<"negMsk.at<uchar>(111, 111): "<<(int)negMsk.at<uchar>(111, 111)<<endl;
+        //cout<<"negMsk.at<uchar>(111, 111): "<<(int)negMsk.at<uchar>(111, 111)<<endl;
     }
     //nmaps_curr_host = cv::abs(nmaps_curr_host); //全取绝对值并不对！
     Mat(-nmaps_curr_host).copyTo(nmaps_curr_host, negMsk); //对某些不易显示的法向取反
