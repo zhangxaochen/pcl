@@ -284,6 +284,10 @@ namespace pcl
         /** \brief Normal maps pyramid for current frame in global coordinate space. */
         std::vector<MapArr> nmaps_g_curr_;
 
+        //sunguofei
+        /** \brief Normal map of previous frame computed from another method in contour cue. */
+        MapArr prev_normals;
+
         /** \brief Vertex maps pyramid for previous frame in global coordinate space. */
         std::vector<MapArr> vmaps_g_prev_;
         /** \brief Normal maps pyramid for previous frame in global coordinate space. */

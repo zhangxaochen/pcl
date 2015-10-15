@@ -343,20 +343,22 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         Mat depth_prev_host;
         if (global_time_!=0)
         {
-            MapArr prev_normals;
             {
-//             depth_prev_host=Mat::zeros(depths_prev_[0].rows(),depths_prev_[0].cols(),CV_16U);
-//             depths_prev_[0].download(depth_prev_host.data,depth_prev_host.cols*depth_prev_host.elemSize());
-//             Mat grandient_x,grandient_y;
-//             Sobel(depth_prev_host,grandient_x,CV_32F,1,0,7);
-//             Sobel(depth_prev_host,grandient_y,CV_32F,0,1,7);
-            //device::computeNormalsContourcue(depth_prev_host,grandient_x,grandient_y,prev_normals);
-//             double _min,_max;
-//             minMaxLoc(depth_prev_host,&_min,&_max);
-//             cout<<"min--------  "<<_min<<endl
-//                 <<"max--------  "<<_max<<endl;
-//             depth_prev_host.convertTo(depth_prev_host,CV_8U,255.0/9000,0);
-//             imshow("previous depth",depth_prev_host);
+            depth_prev_host=Mat::zeros(depths_prev_[0].rows(),depths_prev_[0].cols(),CV_16U);
+            depths_prev_[0].download(depth_prev_host.data,depth_prev_host.cols*depth_prev_host.elemSize());
+            Mat grandient_x,grandient_y;
+            Sobel(depth_prev_host,grandient_x,CV_32F,1,0,7);
+            Sobel(depth_prev_host,grandient_y,CV_32F,0,1,7);
+            MapArr grandient_x_device,grandient_y_device;
+            grandient_x_device.upload(grandient_x.data,grandient_x.cols*grandient_x.elemSize(),grandient_x.rows,grandient_x.cols);
+            grandient_y_device.upload(grandient_y.data,grandient_y.cols*grandient_y.elemSize(),grandient_y.rows,grandient_y.cols);
+            device::computeNormalsContourcue(intr(0),depths_prev_[0],grandient_x_device,grandient_y_device,prev_normals);
+            double _min,_max;
+            minMaxLoc(depth_prev_host,&_min,&_max);
+            cout<<"min--------  "<<_min<<endl
+                <<"max--------  "<<_max<<endl;
+            depth_prev_host.convertTo(depth_prev_host,CV_8U,255.0/9000,0);
+            imshow("previous depth",depth_prev_host);
             }
             {
             //ScopeTimeMicroSec time("|-sgf-computeCandidate"); //1ms
