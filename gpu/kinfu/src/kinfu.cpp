@@ -519,7 +519,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         //imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
         //computeNormalsEigen(vmaps_g_prev_[0], nmap_g_prev_choose_);
 
-        //cc_norm_prev_way_ == 0 or 1, 都可以直接赋值：
+        //第0帧，cc_norm_prev_way_ == 0 or 1, 都可以直接赋值：
         if(this->cc_norm_prev_way_ == 0 || this->cc_norm_prev_way_ == 1)
             nmap_g_prev_choose_ = nmaps_g_prev_[0];
 
@@ -562,20 +562,38 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           //测试 inp-vmap 是否正确, 可能有错！
           //zc::test::testVmap(vmap_prev_inp, "vmap_prev_inp"); //OK, http://i.stack.imgur.com/HQodq.png
 
-          Matrix3f R = prevPose.linear(); //要 rm(row-major)吗？不确定，未解决
+          Matrix3frm Rrm = prevPose.linear(); //要 rm(row-major)吗？必须！测试经验： R(cm) 等价于 R(rm).inverse()
+          Matrix3f Rcm = prevPose.linear();
+          //assert(Rrm == Rcm); //在逻辑层确实相等
+          //assert(Rrm.isApprox(Rcm, 1e-8)); //同上↑
+
+          Matrix3f Rinv = Rrm.inverse();      //
           Vector3f t = prevPose.translation();
 
-          const Mat33 &device_R = device_cast<const Mat33>(R);
+          const Mat33 &device_Rrm = device_cast<const Mat33>(Rrm);
+          const Mat33 &device_Rinv = device_cast<const Mat33>(Rinv); //若上面是 (Matrix3f R) 而非 (Matrix3frm R), 则下面用 Rinv 才正确！！
           const float3 &device_t = device_cast<const float3>(t);
 
           MapArr vmap_g_prev_inp;
-          zc::transformVmap(vmap_prev_inp, device_R, device_t, vmap_g_prev_inp);
+          zc::transformVmap(vmap_prev_inp, device_Rrm, device_t, vmap_g_prev_inp);
           //zc::test::testVmap(vmap_g_prev_inp, "vmap_g_prev_inp"); //OK, ≌nmap_g_prev_eigen_
 
           MapArr nmap_g_prev_inp;
           //computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_choose_); //出错，因前面 nmap_g_prev_choose_ = nmaps_g_prev_[0]; 这里又写其内存
           computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_inp);
           nmap_g_prev_choose_ = nmap_g_prev_inp;
+
+#if 0     //---------------上面结果不太对， 换思路： vmap_cam ->nmap_cam ->nmap_g //结果同上，舍弃；看起来边缘更鲁棒*一点*
+          MapArr nmap_prev_inp;
+          computeNormalsEigen(vmap_prev_inp, nmap_prev_inp);
+
+          MapArr nmap_g_prev_inp2;
+
+          float3 origTvec;
+          origTvec.x = origTvec.y = origTvec.z = 0;
+          zc::transformVmap(nmap_prev_inp, device_R, origTvec, nmap_g_prev_inp2);
+          imshow("nmap_g_prev_inp2", zc::nmap2rgb(nmap_g_prev_inp2));
+#endif
       }
       else if(this->cc_norm_prev_way_ == 2){
           //TODO: contour-cue 论文 2.3 Normal 计算方法 @sgf
