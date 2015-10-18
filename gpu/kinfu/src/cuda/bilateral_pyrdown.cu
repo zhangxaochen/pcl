@@ -266,17 +266,17 @@ namespace pcl
         int row=src.rows,col=src.cols;
         if (x<col && y<row)
         {
-            float dx,dy,dz;
-            dz = 1;
+            float dx=0,dy=0,dz=-1;
             //ÏÈ¼ÆËãÄæ¾ØÕó
             float depth = src.ptr(y)[x];
-            float du = grandient_x.ptr(y)[x],dv=grandient_y.ptr(y)[x];
+            float du = grandient_x.ptr(y)[x]/608,dv=grandient_y.ptr(y)[x]/608;
             float m00 = 1.0/fx*(depth+(x-cx)*du),
                 m01 = 1.0/fx*(x-cx)*dv,
                 m10 = 1.0/fy*(y-cy)*du,
                 m11 = 1.0/fy*(depth+(y-cy)*dv);
             float det = m00*m11-m01*m10;
-            if(abs(det) < 1e-2)
+            //printf("%f \n",det);
+            if(abs(det) < 1e-5)
             {
                 dx = 0;dy = 0;dz = 0;
             }
@@ -294,10 +294,10 @@ namespace pcl
                 dy = dy/norm;
                 dz = dz/norm;
             }
-            dst.ptr(y)[x]=(dx+1)/2;
-            dst.ptr(y+row)[x]=(dy+1)/2;
-            dst.ptr(y+2*row)[x]=(dz+1)/2;
-
+            dst.ptr(y)[x]=dx;
+            dst.ptr(y+row)[x]=dy;
+            dst.ptr(y+2*row)[x]=dz;
+            /*printf("%f %f %f \n",dx,dy,dz);*/
         }
     }
   }

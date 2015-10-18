@@ -349,6 +349,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             Mat grandient_x,grandient_y;
             Sobel(depth_prev_host,grandient_x,CV_32F,1,0,7);
             Sobel(depth_prev_host,grandient_y,CV_32F,0,1,7);
+            //cout<<grandient_y<<endl;
             MapArr grandient_x_device,grandient_y_device;
             grandient_x_device.upload(grandient_x.data,grandient_x.cols*grandient_x.elemSize(),grandient_x.rows,grandient_x.cols);
             grandient_y_device.upload(grandient_y.data,grandient_y.cols*grandient_y.elemSize(),grandient_y.rows,grandient_y.cols);
@@ -360,7 +361,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             float3 t_tmp;
             t_tmp.x=t_tmp.y=t_tmp.z=0;
             const Mat33 &R_prev = device_cast<const Mat33>(rmats_[global_time_-1]);
-            zc::transformVmap(prev_normals,R_prev,t_tmp,prev_normals);
+            //zc::transformVmap(prev_normals,R_prev,t_tmp,prev_normals);
             Mat prev_normal_show=zc::nmap2rgb(prev_normals);
             imshow("normals prev contour cue",prev_normal_show);
 
