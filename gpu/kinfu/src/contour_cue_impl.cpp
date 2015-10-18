@@ -78,6 +78,9 @@ cv::Mat zc::nmap2rgb(const MapArr &nmap, bool debugDraw /*= false*/){
     if(debugDraw)
         imshow("nmaps_curr_host", nmaps_curr_host);
     //cout<<"nmaps_curr_host [260x160], [260x260]: "<<endl
+    //    <<nmaps_curr_host(Rect(236, 159, 3, 3))<<endl
+    //    <<nmaps_curr_host(Rect(450, 220, 3, 3))<<endl
+    //    <<nmaps_curr_host(Rect(450, 280, 3, 3))<<endl;
     //    <<nmaps_curr_host(Rect(260, 160, 3, 3))<<endl
     //    <<nmaps_curr_host(Rect(260, 260, 3, 3))<<endl
     //    <<nmaps_curr_host(Rect(50, 400, 3, 3))<<endl
