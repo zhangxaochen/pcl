@@ -269,7 +269,7 @@ namespace pcl
             float dx=0,dy=0,dz=-1;
             //ÏÈ¼ÆËãÄæ¾ØÕó
             float depth = src.ptr(y)[x];
-            float du = grandient_x.ptr(y)[x]/608,dv=grandient_y.ptr(y)[x]/608;
+            float du = grandient_x.ptr(y)[x],dv=grandient_y.ptr(y)[x];
             float m00 = 1.0/fx*(depth+(x-cx)*du),
                 m01 = 1.0/fx*(x-cx)*dv,
                 m10 = 1.0/fy*(y-cy)*du,
