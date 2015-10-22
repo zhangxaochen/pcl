@@ -534,109 +534,6 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         return (false);
       }
 
-      //zhangxaochen: 调试绘制 nmaps_curr_, nmaps_g_prev_, 后者可能有错
-      //DeviceArray2D<NormalType> nmap2d; //等价于 float8. 
-      //getLastFrameNormals(nmap2d); //opencv难以绘制，要用 pcl::visualizer. 暂放弃
-
-      //Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
-      //imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
-
-      if(this->cc_norm_prev_way_ == 0){ //kinfu-orig.(raycast)
-          nmap_g_prev_choose_ = nmaps_g_prev_[0];
-      }
-      else if(this->cc_norm_prev_way_ == 1){
-          //重新计算 nmap_g 流程：
-          //volume->[raycast]->genDepth->[zc::inpaint]->inpaintDmat->[createVmap]->vmap_cam_coo->[transformVmap]->vmap_g->[computeNormalsEigen]->nmap_g
-          Affine3f prevPose = this->getCameraPose();
-          pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
-          DepthMap genDepthPrev, genDepthPrevInp;
-          pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
-          //Mat genDepthPrevHost(genDepthPrev.rows(), genDepthPrev.cols(), CV_16UC1);
-          //genDepthPrev.download(genDepthPrevHost.data, genDepthPrev.colsBytes());
-          //Mat genDepthPrevHost8u;
-          //genDepthPrevHost.convertTo(genDepthPrevHost8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
-          //imshow("genDepthPrevHost8u", genDepthPrevHost8u);
-
-          zc::inpaintGpu(genDepthPrev, genDepthPrevInp); //i-1 深度图修补 inpaint, 结果见: http://i.stack.imgur.com/vtZ3t.jpg
-          //Mat genDepthPrevInpHost(genDepthPrevInp.rows(), genDepthPrevInp.cols(), CV_16UC1);
-          //genDepthPrevInp.download(genDepthPrevInpHost.data, genDepthPrevInp.colsBytes()); //.step()=1536 与 .colsBytes()=1280
-          //Mat genDepthPrevInpHost8u;
-          //genDepthPrevInpHost.convertTo(genDepthPrevInpHost8u, CV_8UC1, 1*UCHAR_MAX/1e4);
-          //imshow("genDepthPrevInpHost8u", genDepthPrevInpHost8u);
-
-          MapArr vmap_prev_inp; //inpainted
-          device::createVMap(intr(0), genDepthPrevInp, vmap_prev_inp); //i-1 相机坐标系点云
-          //测试 inp-vmap 是否正确, 可能有错！
-          //zc::test::testVmap(vmap_prev_inp, "vmap_prev_inp"); //OK, http://i.stack.imgur.com/HQodq.png
-
-          Matrix3frm Rrm = prevPose.linear(); //要 rm(row-major)吗？必须！测试经验： R(cm) 等价于 R(rm).inverse()
-          Matrix3f Rcm = prevPose.linear();
-          //assert(Rrm == Rcm); //在逻辑层确实相等
-          //assert(Rrm.isApprox(Rcm, 1e-8)); //同上↑
-
-          Matrix3f Rinv = Rrm.inverse();      //
-          Vector3f t = prevPose.translation();
-
-          const Mat33 &device_Rrm = device_cast<const Mat33>(Rrm);
-          const Mat33 &device_Rinv = device_cast<const Mat33>(Rinv); //若上面是 (Matrix3f R) 而非 (Matrix3frm R), 则下面用 Rinv 才正确！！
-          const float3 &device_t = device_cast<const float3>(t);
-
-          MapArr vmap_g_prev_inp;
-          zc::transformVmap(vmap_prev_inp, device_Rrm, device_t, vmap_g_prev_inp);
-          //zc::test::testVmap(vmap_g_prev_inp, "vmap_g_prev_inp"); //OK, ≌nmap_g_prev_eigen_
-
-          MapArr nmap_g_prev_inp;
-          //computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_choose_); //出错，因前面 nmap_g_prev_choose_ = nmaps_g_prev_[0]; 这里又写其内存
-          computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_inp);
-          nmap_g_prev_choose_ = nmap_g_prev_inp;
-
-#if 0     //---------------上面结果不太对， 换思路： vmap_cam ->nmap_cam ->nmap_g //结果同上，舍弃；看起来边缘更鲁棒*一点*
-          MapArr nmap_prev_inp;
-          computeNormalsEigen(vmap_prev_inp, nmap_prev_inp);
-
-          MapArr nmap_g_prev_inp2;
-
-          float3 origTvec;
-          origTvec.x = origTvec.y = origTvec.z = 0;
-          zc::transformVmap(nmap_prev_inp, device_R, origTvec, nmap_g_prev_inp2);
-          imshow("nmap_g_prev_inp2", zc::nmap2rgb(nmap_g_prev_inp2));
-#endif
-      }
-      else if(this->cc_norm_prev_way_ == 2){
-          //TODO: contour-cue 论文 2.3 Normal 计算方法 @sgf
-          Affine3f prevPose = this->getCameraPose();
-          pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
-          DepthMap genDepthPrev, genDepthPrevInp;
-          pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
-          zc::inpaintGpu(genDepthPrev, genDepthPrevInp); //i-1 深度图修补 inpaint
-          Matrix3frm Rrm = prevPose.linear();
-          const Mat33 &device_Rrm = device_cast<const Mat33>(Rrm);
-
-          Mat depth_prev_host=Mat::zeros(genDepthPrevInp.rows(),genDepthPrevInp.cols(),CV_16U);
-          genDepthPrevInp.download(depth_prev_host.data,depth_prev_host.cols*depth_prev_host.elemSize());
-          Mat kx,ky;
-          getDerivKernels(kx,ky,1,0,7);
-          Mat grandient_x,grandient_y;
-          Sobel(depth_prev_host,grandient_x,CV_32F,1,0,7,1.0/1280);
-          Sobel(depth_prev_host,grandient_y,CV_32F,0,1,7,1.0/1280);
-          //cout<<grandient_y<<endl;
-          MapArr grandient_x_device,grandient_y_device;
-          grandient_x_device.upload(grandient_x.data,grandient_x.cols*grandient_x.elemSize(),grandient_x.rows,grandient_x.cols);
-          grandient_y_device.upload(grandient_y.data,grandient_y.cols*grandient_y.elemSize(),grandient_y.rows,grandient_y.cols);
-          device::computeNormalsContourcue(intr(0),depths_prev_[0],grandient_x_device,grandient_y_device,prev_normals);
-          vector<float> normals_curr_coo;
-          int cols_normal;
-          prev_normals.download(normals_curr_coo,cols_normal);
-          //当前相机坐标系下的法向，转成世界坐标系下的法向
-          float3 t_tmp;
-          t_tmp.x=t_tmp.y=t_tmp.z=0;
-          //const Mat33 &R_prev = device_cast<const Mat33>(rmats_[global_time_-1]);
-          MapArr prev_normals_word_coo;
-          zc::transformVmap(prev_normals,device_Rrm,t_tmp,prev_normals_word_coo);
-          Mat prev_normal_show=zc::nmap2rgb(prev_normals_word_coo);
-
-          nmap_g_prev_choose_ = prev_normals_word_coo;
-      }
 
       ///////////////////////////////////////////////////////////////////////////////////////////
       // Iterative Closest Point
@@ -950,6 +847,110 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       resizeNMap (nmaps_g_prev_[i-1], nmaps_g_prev_[i]);
     }
     pcl::device::sync ();
+  }
+
+  //zhangxaochen: 调试绘制 nmaps_curr_, nmaps_g_prev_, 后者可能有错
+  //DeviceArray2D<NormalType> nmap2d; //等价于 float8. 
+  //getLastFrameNormals(nmap2d); //opencv难以绘制，要用 pcl::visualizer. 暂放弃
+
+  //Mat nmaps_g_prev_0_host = zc::nmap2rgb(nmaps_g_prev_[0]); //边缘法向不好
+  //imshow("nmaps_g_prev_0_host", nmaps_g_prev_0_host);
+
+  if(this->cc_norm_prev_way_ == 0){ //kinfu-orig.(raycast)
+      nmap_g_prev_choose_ = nmaps_g_prev_[0];
+  }
+  else if(this->cc_norm_prev_way_ == 1){
+      //重新计算 nmap_g 流程：
+      //volume->[raycast]->genDepth->[zc::inpaint]->inpaintDmat->[createVmap]->vmap_cam_coo->[transformVmap]->vmap_g->[computeNormalsEigen]->nmap_g
+      Affine3f prevPose = this->getCameraPose();
+      pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
+      DepthMap genDepthPrev, genDepthPrevInp;
+      pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
+      //Mat genDepthPrevHost(genDepthPrev.rows(), genDepthPrev.cols(), CV_16UC1);
+      //genDepthPrev.download(genDepthPrevHost.data, genDepthPrev.colsBytes());
+      //Mat genDepthPrevHost8u;
+      //genDepthPrevHost.convertTo(genDepthPrevHost8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+      //imshow("genDepthPrevHost8u", genDepthPrevHost8u);
+
+      zc::inpaintGpu(genDepthPrev, genDepthPrevInp); //i-1 深度图修补 inpaint, 结果见: http://i.stack.imgur.com/vtZ3t.jpg
+      //Mat genDepthPrevInpHost(genDepthPrevInp.rows(), genDepthPrevInp.cols(), CV_16UC1);
+      //genDepthPrevInp.download(genDepthPrevInpHost.data, genDepthPrevInp.colsBytes()); //.step()=1536 与 .colsBytes()=1280
+      //Mat genDepthPrevInpHost8u;
+      //genDepthPrevInpHost.convertTo(genDepthPrevInpHost8u, CV_8UC1, 1*UCHAR_MAX/1e4);
+      //imshow("genDepthPrevInpHost8u", genDepthPrevInpHost8u);
+
+      MapArr vmap_prev_inp; //inpainted
+      device::createVMap(intr(0), genDepthPrevInp, vmap_prev_inp); //i-1 相机坐标系点云
+      //测试 inp-vmap 是否正确, 可能有错！
+      //zc::test::testVmap(vmap_prev_inp, "vmap_prev_inp"); //OK, http://i.stack.imgur.com/HQodq.png
+
+      Matrix3frm Rrm = prevPose.linear(); //要 rm(row-major)吗？必须！测试经验： R(cm) 等价于 R(rm).inverse()
+      Matrix3f Rcm = prevPose.linear();
+      //assert(Rrm == Rcm); //在逻辑层确实相等
+      //assert(Rrm.isApprox(Rcm, 1e-8)); //同上↑
+
+      Matrix3f Rinv = Rrm.inverse();      //
+      Vector3f t = prevPose.translation();
+
+      const Mat33 &device_Rrm = device_cast<const Mat33>(Rrm);
+      const Mat33 &device_Rinv = device_cast<const Mat33>(Rinv); //若上面是 (Matrix3f R) 而非 (Matrix3frm R), 则下面用 Rinv 才正确！！
+      const float3 &device_t = device_cast<const float3>(t);
+
+      MapArr vmap_g_prev_inp;
+      zc::transformVmap(vmap_prev_inp, device_Rrm, device_t, vmap_g_prev_inp);
+      //zc::test::testVmap(vmap_g_prev_inp, "vmap_g_prev_inp"); //OK, ≌nmap_g_prev_eigen_
+
+      MapArr nmap_g_prev_inp;
+      //computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_choose_); //出错，因前面 nmap_g_prev_choose_ = nmaps_g_prev_[0]; 这里又写其内存
+      computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_inp);
+      nmap_g_prev_choose_ = nmap_g_prev_inp;
+
+#if 0     //---------------上面结果不太对， 换思路： vmap_cam ->nmap_cam ->nmap_g //结果同上，舍弃；看起来边缘更鲁棒*一点*
+      MapArr nmap_prev_inp;
+      computeNormalsEigen(vmap_prev_inp, nmap_prev_inp);
+
+      MapArr nmap_g_prev_inp2;
+
+      float3 origTvec;
+      origTvec.x = origTvec.y = origTvec.z = 0;
+      zc::transformVmap(nmap_prev_inp, device_R, origTvec, nmap_g_prev_inp2);
+      imshow("nmap_g_prev_inp2", zc::nmap2rgb(nmap_g_prev_inp2));
+#endif
+  }
+  else if(this->cc_norm_prev_way_ == 2){
+      //TODO: contour-cue 论文 2.3 Normal 计算方法 @sgf
+      Affine3f prevPose = this->getCameraPose();
+      pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
+      DepthMap genDepthPrev, genDepthPrevInp;
+      pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
+      zc::inpaintGpu(genDepthPrev, genDepthPrevInp); //i-1 深度图修补 inpaint
+      Matrix3frm Rrm = prevPose.linear();
+      const Mat33 &device_Rrm = device_cast<const Mat33>(Rrm);
+
+      Mat depth_prev_host=Mat::zeros(genDepthPrevInp.rows(),genDepthPrevInp.cols(),CV_16U);
+      genDepthPrevInp.download(depth_prev_host.data,depth_prev_host.cols*depth_prev_host.elemSize());
+      Mat kx,ky;
+      getDerivKernels(kx,ky,1,0,7);
+      Mat grandient_x,grandient_y;
+      Sobel(depth_prev_host,grandient_x,CV_32F,1,0,7,1.0/1280);
+      Sobel(depth_prev_host,grandient_y,CV_32F,0,1,7,1.0/1280);
+      //cout<<grandient_y<<endl;
+      MapArr grandient_x_device,grandient_y_device;
+      grandient_x_device.upload(grandient_x.data,grandient_x.cols*grandient_x.elemSize(),grandient_x.rows,grandient_x.cols);
+      grandient_y_device.upload(grandient_y.data,grandient_y.cols*grandient_y.elemSize(),grandient_y.rows,grandient_y.cols);
+      device::computeNormalsContourcue(intr(0),depths_prev_[0],grandient_x_device,grandient_y_device,prev_normals);
+      vector<float> normals_curr_coo;
+      int cols_normal;
+      prev_normals.download(normals_curr_coo,cols_normal);
+      //当前相机坐标系下的法向，转成世界坐标系下的法向
+      float3 t_tmp;
+      t_tmp.x=t_tmp.y=t_tmp.z=0;
+      //const Mat33 &R_prev = device_cast<const Mat33>(rmats_[global_time_-1]);
+      MapArr prev_normals_word_coo;
+      zc::transformVmap(prev_normals,device_Rrm,t_tmp,prev_normals_word_coo);
+      Mat prev_normal_show=zc::nmap2rgb(prev_normals_word_coo);
+
+      nmap_g_prev_choose_ = prev_normals_word_coo;
   }
 
   //sunguofei
