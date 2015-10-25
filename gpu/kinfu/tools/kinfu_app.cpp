@@ -1259,11 +1259,10 @@ struct KinFuApp
                     Mat nmap_g_prev_host = zc::nmap2rgb(nmap_g_prev);
                     imshow("nmap_g_prev_host", nmap_g_prev_host);
                 }
-
-                int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
-                if(key==27) //Esc
-                    break;
             }
+            int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
+            if(key==27) //Esc
+                break;
         }//for-pngFnames_
     }//else //this->png_source_ == true
 #endif //HAVE_OPENCV
