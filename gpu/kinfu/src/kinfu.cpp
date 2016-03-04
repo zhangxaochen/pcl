@@ -722,7 +722,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
             //cout << "eigenvalues: " << eigenvalues << endl;
             cond=sqrt(cond);
-            cout<<"condition of A: "<<cond<<endl;
+            //cout<<"condition of A: "<<cond<<endl;
 //             if (cond>100)
 //             {
 //                 Rcurr=Rcurr_back;tcurr=tcurr_back;

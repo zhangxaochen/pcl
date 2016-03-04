@@ -940,7 +940,7 @@ struct KinFuApp
     dbgPrint("--source_cb1_device\n\t--fid, time, baseline?: %u, %lu, %f\n", depth_wrapper->getFrameID(), depth_wrapper->getTimeStamp(), depth_wrapper->getBaseline());
 //     cout << "--source_cb1_device" << endl
 //          << "fid, time, baseline?: " << depth_wrapper->getFrameID() << ", " << depth_wrapper->getTimeStamp() << ", " << depth_wrapper->getBaseline() << endl;
-    cout << "\t--" << boost::this_thread::get_id() << endl;
+    cout << "\t--threadId: " << boost::this_thread::get_id() << endl;
     {
       //boost::mutex::scoped_try_lock lock(data_ready_mutex_);
       //改用 阻塞锁, 不要 try-lock: 
@@ -1125,7 +1125,7 @@ struct KinFuApp
             while (!exit_ && scene_view_not_stopped && image_view_not_stopped)
             { 
                 dbgPrintln("mainloop-while, locking~");
-                cout << boost::this_thread::get_id() << endl;
+                cout << "threadId: " << boost::this_thread::get_id() << endl;
 
                 //cout << "mainloop-while, locking~" <<endl;
                 //zc: trigger 速度可能较慢, 
