@@ -124,13 +124,23 @@ void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const Map
 //@brief test basic operations with pcl-cuda, since error occured when impl. *contourCorrespCandidate*; see: http://www.evernote.com/l/AY82PvIZaq9MAYJsLwSy_b43fCV0DwdcDI0/
 void testPclCuda(DepthMap &o1, MapArr &o2);
 
-//@brief Perform affine transform of vmap (part of @tranformMaps)
+//@brief Perform affine transform of vmap (part of @tranformMaps), also can be used on Nmaps.
 //@param[in] vmap_src source vertex map
 //@param[in] Rmat rotation mat
 //@param[in] tvec translation
 //@param[out] vmap_dst destination vertex map
 void transformVmap(const MapArr &vmap_src, const Mat33 &Rmat, const float3 &tvec, MapArr &vmap_dst);
 
+typedef DeviceArray2D<uchar3> Image;
+
+//@brief migration from *renderTangentColors* @kinfu_remake(kfusion), called on HOST.
+//@return Image, DEVICE memory, Ð§¹û¼û: http://i.stack.imgur.com/5YBCK.png
+PCL_EXPORTS Image renderNmap2(const MapArr &nmap, bool debugDraw = false);
+
+PCL_EXPORTS void foo_in_cc_cu();
+
 }//namespace zc
+
+PCL_EXPORTS void foo_in_cc_cpp();
 
 #endif //_CONTOUR_CUE_IMPLEMENTATION_

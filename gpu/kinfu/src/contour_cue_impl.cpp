@@ -2,6 +2,7 @@
 #include "zcUtility.h"
 
 using namespace pcl;
+using namespace cv;
 
 //do-something
 //2015-9-27 21:10:57 currently do NOTHING
@@ -43,6 +44,7 @@ void zc::test::testInpaintImplCpuAndGpu(const DepthMap &src, bool debugDraw /*= 
     }
 }//testInpaintImplCpuAndGpu
 
+//@brief 用 vmap 生成 nmap 做可视化
 void zc::test::testVmap( const MapArr &vmap, const char *winName ){
     MapArr nmap;
     computeNormalsEigen(vmap, nmap);
@@ -89,3 +91,6 @@ cv::Mat zc::nmap2rgb(const MapArr &nmap, bool debugDraw /*= false*/){
 
     return nmaps_curr_host;
 }//nmap2rgb
+
+void foo_in_cc_cpp(){}
+

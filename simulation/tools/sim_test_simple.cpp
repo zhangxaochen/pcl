@@ -582,6 +582,9 @@ main (int argc, char** argv)
   int width = 640;
   int height = 480;
 
+  //window_width_ = width * 2;
+  //window_height_ = height * 2;
+  //zhangxaochen:
   window_width_ = width * 2;
   window_height_ = height * 2;
 
@@ -630,7 +633,9 @@ main (int argc, char** argv)
 
   //range_likelihood_ = RangeLikelihoodGLSL::Ptr(new RangeLikelihoodGLSL(1, 1, height, width, scene_, 0));
 
-  range_likelihood_ = RangeLikelihood::Ptr (new RangeLikelihood (2, 2, height/2, width/2, scene_));
+  //range_likelihood_ = RangeLikelihood::Ptr (new RangeLikelihood (2, 2, height/2, width/2, scene_));
+  //zhangxaochen: 读 E:\Github\pcl\simulation\tools\README_about_tools, 提到改成1x1才对, 试着改, 还不对  //2016-3-31 10:06:16
+  range_likelihood_ = RangeLikelihood::Ptr (new RangeLikelihood (1, 1, height, width, scene_));
   // range_likelihood_ = RangeLikelihood::Ptr(new RangeLikelihood(10, 10, 96, 96, scene_));
   // range_likelihood_ = RangeLikelihood::Ptr(new RangeLikelihood(1, 1, 480, 640, scene_));
 

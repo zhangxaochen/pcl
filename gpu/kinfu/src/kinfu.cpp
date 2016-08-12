@@ -38,6 +38,9 @@
 #include <iostream>
 #include <algorithm>
 
+#include <pcl/filters/extract_indices.h>
+//#include <pcl/>
+
 #include <pcl/common/time.h>
 #include <pcl/gpu/kinfu/kinfu.h>
 #include "internal.h"
@@ -80,6 +83,7 @@ namespace pcl
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pcl::gpu::KinfuTracker::KinfuTracker (int rows, int cols) : rows_(rows), cols_(cols), global_time_(0), max_icp_distance_(0), integration_metric_threshold_(0.f), disable_icp_(false)
+    ,synModelCloudPtr_(new PointCloud<PointXYZ>), edgeCloud_(new PointCloud<PointXYZ>), edgeCloudVisible_(new PointCloud<PointXYZ>) //zhangxaochen //2016-4-10 22:03:53
 {
   //zhangxaochen:
   icp_orig_ = true;
@@ -89,6 +93,8 @@ pcl::gpu::KinfuTracker::KinfuTracker (int rows, int cols) : rows_(rows), cols_(c
   cc_norm_prev_way_ = 0;
 
   pRaycaster_ = RayCaster::Ptr(new RayCaster(rows_, cols_, KINFU_DEFAULT_DEPTH_FOCAL_X, KINFU_DEFAULT_DEPTH_FOCAL_Y));
+
+  regObjId_ = 0; //2016-4-20 21:11:39
 
   const Vector3f volume_size = Vector3f::Constant (VOLUME_SIZE);
   const Vector3i volume_resolution(VOLUME_X, VOLUME_Y, VOLUME_Z);
@@ -117,7 +123,16 @@ pcl::gpu::KinfuTracker::KinfuTracker (int rows, int cols) : rows_(rows), cols_(c
   tvecs_.reserve (30000);
 
   reset ();
-}
+
+  //2016-4-20 14:50:40
+  //if(regObjId_ == 1){//实例化一个影子 TSDF 体模型, 仅存放cube的TSDF, 略浪费
+  //去掉 if。。。因为此处 regObjId_ 尚未初始化, 所以直接预分配500MB内存
+      tsdf_volume_shadow_ = TsdfVolume::Ptr(new TsdfVolume(volume_resolution));
+      tsdf_volume_shadow_->setSize(volume_size);
+      tsdf_volume_shadow_->setTsdfTruncDist(default_tranc_dist);
+      tsdf_volume_shadow_->reset();
+  //}
+}//KinfuTracker-ctor
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void
@@ -216,6 +231,10 @@ pcl::gpu::KinfuTracker::allocateBufffers (int rows, int cols)
   vmaps_g_prev_.resize (LEVELS);
   nmaps_g_prev_.resize (LEVELS);
 
+  //zhangxaochen: //2016-4-21 16:25:32
+  vmap_g_model_.create(rows * 3, cols);
+  nmap_g_model_.create(rows * 3, cols);
+
   //sunguofei
   depths_prev_.resize(LEVELS);
   nmaps_g_prev_contourcue.resize(LEVELS);
@@ -260,15 +279,48 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 {  
   device::Intr intr (fx_, fy_, cx_, cy_);
 
+  //zhangxaochen: 调用计数器 //2016-7-12 21:31:02
+  static int callCnt = 0;
+  callCnt++;
+
   if (!disable_icp_)
   {
+      //加载的虚拟立方体, 用相机内外参转到 深度图
+      if(synModelCloudPtr_->size() > 0){
+          Affine3f pose = this->getCameraPose();
+          cv::Mat depFromCloud;
+          //{
+          //zc::ScopeTimeMicroSec time("zc::cloud2depth"); //23ms
+          zc::cloud2depth(*synModelCloudPtr_, pose, intr, cols_, rows_, depFromCloud); //√
+          //}
+          //{
+          //zc::ScopeTimeMicroSec time("zc::cloud2depthCPU"); //240ms
+          //zc::cloud2depthCPU(*synModelCloudPtr_, pose, intr, 640, 480, depFromCloud);//√
+          //}
+
+          if(edgeIdxVec_.size() > 0 && edgeCloud_->size() == 0){ //若加载 -edgeIdx, 且txt中确实有内容, 且第一次到此 if
+              ExtractIndices<PointXYZ> extractInd;
+              extractInd.setInputCloud(synModelCloudPtr_);
+              extractInd.setIndices(boost::make_shared<vector<int>>(edgeIdxVec_));
+              extractInd.filter(*edgeCloud_);
+          }
+          edgeCloudVisible_.reset(new PointCloud<PointXYZ>); //重置它, 防止累加
+          zc::raycastCloudSubset(*edgeCloud_, pose, intr, depFromCloud, *edgeCloudVisible_);
+
+          cv::Mat dfc8u(depFromCloud.rows, depFromCloud.cols, CV_8UC1);
+          double dmin, dmax;
+          minMaxLoc(depFromCloud, &dmin, &dmax);
+          depFromCloud.convertTo(dfc8u, CV_8UC1, 255./(dmax-dmin), -dmin*255./(dmax-dmin));
+          cv::imshow("dfc8u", dfc8u);
+      }
+
       ContourMask normal_mask;
       ContourMask mask;
-      uchar* contour=(uchar*)malloc(640*480*sizeof(uchar));
+      uchar* contour=(uchar*)malloc(640*480*sizeof(uchar)); //contour of frame i
       uchar* candidate=(uchar*)malloc(640*480*sizeof(uchar));
       vector<float> normals(640*480*3);
-      vector<float> vertexes(640*480*3);
-      vector<float> vertexes_curr(640*480*3);
+      vector<float> vertexes(640*480*3); //model synthesized, i.e., frame i-1
+      vector<float> vertexes_curr(640*480*3); //frame i
       float position_camera_x,position_camera_y,position_camera_z;
       if (global_time_!=0)
       {
@@ -292,14 +344,16 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
         bool debugDraw = true;
         //zc::test::testInpaintImplCpuAndGpu(depths_curr_[0], debugDraw); //test OK.
+
         {
         //ScopeTimeMicroSec time("|-zc-inpaintGpu"); //2ms
-        zc::inpaintGpu(depths_curr_[0], depths_curr_[0]);
+        //zc::inpaintGpu(depths_curr_[0], depths_curr_[0]); //不要 inpaint 数据源, 
+        zc::inpaintGpu(depths_curr_[0], dmatInp_);
         }
 
         {
         //ScopeTimeMicroSec time("|-zc-computeContours"); //0ms
-        zc::computeContours(depths_curr_[0], contMsk_);
+        zc::computeContours(dmatInp_, contMsk_);
         }
         {
         //ScopeTimeMicroSec time("|-zc-contMsk_.download"); //1ms
@@ -400,12 +454,12 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           !icp_orig_ && icp_sgf_cpu_)
       {
           {
-          //ScopeTimeMicroSec time("|-sgf-kdtree-total"); //130ms
+          ScopeTimeMicroSec time("|-sgf-kdtree-total"); //130~180ms
 
           int c=640;
-          mask.download(contour,c);
+          //mask.download(contour,c);
+          contMsk_.download(contour, c); //zhangxaochen: 改用 contMsk_, 包含了无效点临界, 下面cont-Vmap 选点也要改条件 //2016-3-27 00:23:04
           normal_mask.download(candidate,c);
-          //nmaps_g_prev_[0].download(normals,c);
           nmaps_g_prev_[0].download(normals,c);
           vmaps_g_prev_[0].download(vertexes,c);
           vmaps_curr_[0].download(vertexes_curr,c);
@@ -427,7 +481,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           }
           for (int i=0;i<vertexes_curr.size()/3;++i)
           {
-              if(contour[i]==255)
+              if(contour[i]==255 && !pcl_isnan(vertexes_curr[i])) //zhangxaochen: 增加判定 vmap 对应位置 not-nan //2016-3-27 00:21:35
               {
                   contour_curr.push_back(vertexes_curr[i]);
                   contour_curr.push_back(vertexes_curr[i+vertexes_curr.size()/3]);
@@ -474,14 +528,18 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
               cloud->points[i].z = contour_candidate[i*3+2];
           }
 
+          {
+          //ScopeTimeMicroSec t("kdtree.setInputCloud"); //~15ms
           kdtree.setInputCloud (cloud);
+          }
 
           }//ScopeTimeMicroSec time("sgf-kdtree-total");
       }
       
 
       //can't perform more on first frame
-      if (global_time_ == 0)
+      if (global_time_ == 0
+          && regObjId_ == 0) //zhangxaochen: 且若用 kinfu.orig 数据源, 即第0帧直接放入, 后面以第0帧为世界坐标系
       {
         Matrix3frm init_Rcam = rmats_[0]; //  [Ri|ti] - pos of camera, i.e.
         Vector3f   init_tcam = tvecs_[0]; //  transform from camera to global coo space for (i-1)th camera pose
@@ -530,9 +588,100 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         if(this->cc_norm_prev_way_ == 0 || this->cc_norm_prev_way_ == 1 || this->cc_norm_prev_way_ == 2)
             nmap_g_prev_choose_ = nmaps_g_prev_[0];
 
+        depth_raw.copyTo(depth_raw_prev_); //保存raw, 在下一帧使用
+
         ++global_time_;
         return (false);
+        //return (true); //zhangxaochen: f0 也返回true, 使得 f0 能 showScene //全灰色, 为什么? 暂时放弃
       }
+      else if (global_time_ == 0){ //if regObjId_ == 1,2,3
+          CV_Assert(synModelCloudPtr_->size() > 0);
+
+          Matrix3frm init_Rcam = rmats_[0];
+          Vector3f   init_tcam = tvecs_[0];
+          Mat33&  device_Rcam = device_cast<Mat33> (init_Rcam);
+          float3& device_tcam = device_cast<float3>(init_tcam);
+
+          if(regObjId_ == 1 || regObjId_ == 3){ //若dmat与TSDF投射结果配准, 虽第0帧, 也要与cube配, 而非直接放入TSDF
+              TsdfVolume::Ptr pTsdfVolume = regObjId_ == 1 ? tsdf_volume_shadow_ : tsdf_volume_; //其实第0帧直接用 tsdf_volume_ 就行, 这里谨慎起见;
+              Affine3f prevPose = this->getCameraPose();
+              //pRaycaster_->run(*pTsdfVolume, prevPose); //并不更好用
+              //pRaycaster_->getVertexMap();
+              float3 device_volume_size = device_cast<const float3> (tsdf_volume_->getSize());
+
+              //获得待配准的 vmap, nmap
+              raycast (intr, device_Rcam, device_tcam, pTsdfVolume->getTsdfTruncDist(), device_volume_size, pTsdfVolume->data(), vmaps_g_prev_[0], nmaps_g_prev_[0]);
+              for (int i = 1; i < LEVELS; ++i)
+              {
+                  resizeVMap (vmaps_g_prev_[i-1], vmaps_g_prev_[i]);
+                  resizeNMap (nmaps_g_prev_[i-1], nmaps_g_prev_[i]);
+              }
+              pcl::device::sync ();
+          }
+//           else if(regObjId_ == 2){ //直接投射 cloud2depth, 与TSDF【无关】
+//               Affine3f pose = this->getCameraPose();
+//               DeviceArray2D<unsigned short> depFromCloud_device;
+//               zc::cloud2depth(*synModelCloudPtr_, pose, intr, cols_, rows_, depFromCloud_device); //√
+// 
+// #if 0   //cube-dmat 上不做双边滤波
+//               device::bilateralFilter (depFromCloud_device, depths_curr_[0]);
+//               if (max_icp_distance_ > 0)
+//                   device::truncateDepth(depths_curr_[0], max_icp_distance_);
+// #elif 1
+//               depths_curr_[0] = depFromCloud_device;
+// #endif
+//               for (int i = 1; i < LEVELS; ++i)
+//                   device::pyrDown (depths_curr_[i-1], depths_curr_[i]);
+// 
+//               for (int i = 0; i < LEVELS; ++i)
+//               {
+//                   device::createVMap (intr(i), depths_curr_[i], vmaps_g_prev_[i]);
+//                   //device::createNMap(vmaps_curr_[i], nmaps_curr_[i]);
+//                   computeNormalsEigen (vmaps_g_prev_[i], nmaps_g_prev_[i]);
+//                   device::tranformMaps (vmaps_g_prev_[i], nmaps_g_prev_[i], device_Rcam, device_tcam, vmaps_g_prev_[i], nmaps_g_prev_[i]);
+//               }
+//           }//regObjId_ == 1,2,3
+
+          //测试 vmaps_g_prev_ 是否生成正确？ //2016-4-20 19:42:11
+          /*Mat vm_g_prev()*/
+
+          ++global_time_; //要+1, 后果是: 真实数据[0]在保存的poses.csv 中位置是 [1]
+          //return (false); //不返回, 继续往下走, 真实数据要接着与 cube-vmap/nmap配准
+      }//if global_time_ == 0 && regObjId_ != 0
+      
+      //不管是不是 global_time_ == 0：
+      if(regObjId_ == 2){ //直接投射 cloud2depth, 与TSDF【无关】
+          Affine3f pose = this->getCameraPose();
+          Matrix3frm Rrm = pose.linear(); //相当于 rmats_ & tvecs_.back()
+          Vector3f t = pose.translation();
+          Mat33&  device_Rcam = device_cast<Mat33> (Rrm);
+          float3& device_tcam = device_cast<float3>(t);
+
+          DeviceArray2D<unsigned short> depFromCloud_device;
+          zc::cloud2depth(*synModelCloudPtr_, pose, intr, cols_, rows_, depFromCloud_device); //√
+
+#if 0   //cube-dmat 上不做双边滤波
+          device::bilateralFilter (depFromCloud_device, depths_curr_[0]);
+          if (max_icp_distance_ > 0)
+              device::truncateDepth(depths_curr_[0], max_icp_distance_);
+#elif 1
+          //depths_curr_[0] = depFromCloud_device;
+          depths_prev_[0] = depFromCloud_device;
+#endif
+          for (int i = 1; i < LEVELS; ++i)
+              //device::pyrDown (depths_curr_[i-1], depths_curr_[i]);
+              device::pyrDown (depths_prev_[i-1], depths_prev_[i]);
+
+          for (int i = 0; i < LEVELS; ++i)
+          {
+              //device::createVMap (intr(i), depths_curr_[i], vmaps_g_prev_[i]);
+              device::createVMap (intr(i), depths_prev_[i], vmaps_g_prev_[i]);
+              //device::createNMap(vmaps_curr_[i], nmaps_curr_[i]);
+              computeNormalsEigen (vmaps_g_prev_[i], nmaps_g_prev_[i]); //此时 vmaps_g_prev_, nmaps_g_prev_ 都不是 global, 下面再转换
+              //设定 tranformMaps 的 src, dst 相同没问题？ //似乎没问题 2016-5-25 17:11:31
+              device::tranformMaps (vmaps_g_prev_[i], nmaps_g_prev_[i], device_Rcam, device_tcam, vmaps_g_prev_[i], nmaps_g_prev_[i]);
+          }
+      }//if(regObjId_ == 2)
 
 
       ///////////////////////////////////////////////////////////////////////////////////////////
@@ -552,7 +701,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 //         tcurr = hint->translation().matrix()+d_t;
 //         Rcurr_back = hint->rotation().matrix();
 //         tcurr_back = hint->translation().matrix()+d_t;
-        
+#if 0
         //sunguofei
         //利用外部设备得到的ΔR和Δt，计算这一帧的初值
         Matrix3frm dr=hint->rotation().matrix();
@@ -561,6 +710,16 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         tcurr=d_R*dt+tprev;
         Rcurr_back=Rcurr;
         tcurr_back=tcurr;
+#endif
+        if(this->imud_){
+            Matrix3f dR = hint->rotation(); //此时 hint 是 delta量, ci->c(i-1), 用于右乘
+            //Rcurr = dR * Rprev; //按 2014-IMU, 右乘
+            Rcurr = Rprev * dR;
+            tcurr = tprev; //t老样子
+
+            Rcurr_back = Rcurr;
+            tcurr_back = tcurr;
+        }
       }
       else
       {
@@ -569,17 +728,54 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
         //Rcurr_back = init_Rcam_;
         //tcurr_back = init_tcam_;
       }
-      const double 
-          condThresh = 1e2,
-          INVALID_COND = 1e8;
-      double cond = INVALID_COND;
+      const double condThresh = 1.5e2; //由1e2改为 1.5e2 //2016-7-14 00:21:58
+          //INVALID_COND = 1e8; //毫无意义 2016-7-14 00:22:54
+      double condNum = 0;//INVALID_COND;
 
-      bool illCondMat = false;
+      //zhangxaochen: 进入ICP迭代之前【观察】待配准src, dst, 增加 regObjId_ 之后 dst 会随 Id 变化而改变 //2016-4-21 11:20:17
+//       MapArr &vmap_g_prev_0 = vmaps_g_prev_[0]; //lv0 最大分辨率 640*480
+//       MapArr &vmap_curr_0 = vmaps_curr_[0];
+      DepthMap dmatPrev_device, dmatCurr_device;
+      device::generateDepth(device_Rprev_inv, device_tprev, vmaps_g_prev_[0], dmatPrev_device); //vmaps_g_prev_ 重新投影为深度图, 用于观察
+      //device::generateDepth(device_Rprev_inv, device_tprev, vmaps_curr_[0], dmatCurr_device); //实际都用 Rprev, tprev //×, vmaps_curr_ 是相机坐标系下的, 不应该用任何外参去转成 dmat
+      dmatCurr_device = depths_curr_[0];
+      Mat dmatPrevHost(dmatPrev_device.rows(), dmatPrev_device.cols(), CV_16U),
+          dmatCurrHost(dmatCurr_device.rows(), dmatCurr_device.cols(), CV_16U);
+      dmatPrev_device.download(dmatPrevHost.data, dmatPrev_device.colsBytes());
+      dmatCurr_device.download(dmatCurrHost.data, dmatCurr_device.colsBytes());
+      Mat dmPh8u, dmCh8u;
+      dmatPrevHost.convertTo(dmPh8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+
+      //似乎 dmatCurr 数据源有问题, 打印观察最大最小值: 【已解决】
+      //double dmin, dmax;
+      //minMaxLoc(dmatCurrHost, &dmin, &dmax);
+      //cout<<"dmatCurrHost, dmin, dmax: "<<dmin<<", "<<dmax<<endl;
+      
+      dmatCurrHost.convertTo(dmCh8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+      //待配准的两图拼接结果：
+      Mat prevAndCurr8u;
+      cv::hconcat(dmPh8u, dmCh8u, prevAndCurr8u);
+      cv::line(prevAndCurr8u, Point(640, 0), Point(640, 480), 255); //白色分割竖线
+      imshow("prevAndCurr8u", prevAndCurr8u);
+      static int pacCnt = 0; //prev-and-curr-counter
+      char buf[256];
+      sprintf (buf, "./prev&curr-%06d.png", pacCnt);
+      imwrite(buf, prevAndCurr8u);
+      pacCnt++;
+
+      illCondMat_ = false;
       {
         //ScopeTime time("icp-all"); //600~900ms
         for (int level_index = LEVELS-1; level_index>=0; --level_index)
+        //for (int level_index = 0; level_index>=0; --level_index) //调试 M2 直接 reset 原因    //2016-5-28 16:34:08
         {
-          if(hint && illCondMat)
+            if(callCnt==131){ //针对数据 @monitor-0714-1
+                               //结论: 131帧漂移不是金字塔的错 2016-7-14 18:00:07
+                level_index=0; //金字塔最底层
+                cout<<"+++++++++++++++setting level_index=0"<<endl;
+            }
+
+          if(hint && illCondMat_)
               break;
           int iter_num = icp_iterations_[level_index];
 
@@ -595,9 +791,48 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
           //CorespMap& coresp = coresps_[level_index];
 
           for (int iter = 0; iter < iter_num; ++iter)
+          //for (int iter = 0; iter < 5; ++iter) //imud 时, 尝试减少迭代次数, 观察是否收敛, 结果例如: @monitor-0715-0-kf-imud-iter3 //2016-7-17 17:22:01
           {
+              if(callCnt==131){ //针对数据 @monitor-0714-1 //2016-7-15 01:08:22
+                  Eigen::Quaternionf q (Rcurr);
+                  cout<<"+++++++++++++++131::t+Rcurr: "<< tcurr[0] << "," << tcurr[1] << "," << tcurr[2] << "," << q.w () << "," << q.x () << "," << q.y ()<< ","  << q.z () << std::endl;
+              }
             Mat33&  device_Rcurr = device_cast<Mat33> (Rcurr);
             float3& device_tcurr = device_cast<float3>(tcurr);
+
+            //---------------zhangxaochen: pre-GCOO_2_CAMCOO //2016-5-26 15:53:47
+            Affine3f pose; //tmp-pose
+            pose.linear() = Rcurr;
+            pose.translation() = tcurr;
+//             cout<<"level_index, iter: "<<level_index<<", "<<iter<<endl
+//                 <<pose.matrix()<<endl;
+
+//#ifdef GCOO_2_CAMCOO //按耿老师要求, 将 v/n_g_prev 投影到 cam_coo, 而不是原来的 v/n_curr 投影到 global_coo //g2c
+#if 0
+            //所以目标是: 内循环每次迭代重新求解 vmap_g_prev, nmap_g_prev   //2016-5-25 20:52:58
+            if(regObjId_ == 2){
+                //---------------1. 由 R, tcurr 得到当前视点下立方体organized子点云, 注意, 坐标不变, 仅是取子集
+                DeviceArray2D<unsigned short> depFromCloud_device; //tmp-dmat-device, 原尺寸, 后面需要 pyrDown
+                zc::cloud2depth(*synModelCloudPtr_, pose, intr, cols_, rows_, depFromCloud_device); //立方体投影到相机坐标系, 得到深度图
+                depths_prev_[0] = depFromCloud_device; //这里改写 depths_prev_, 在别处有无副作用? 暂不清楚 【未解决】
+                for (int i = 1; i <= level_index; ++i) //i 只到 level_index
+                    device::pyrDown (depths_prev_[i-1], depths_prev_[i]);
+            }
+            DepthMap dmat_prev_pyr = depths_prev_[level_index]; //当前pyr-level 的 dmat_prev-device
+            Mat dmatPrevHost = Mat::zeros(dmat_prev_pyr.rows(), dmat_prev_pyr.cols(), CV_16UC1); //全填充0
+            dmat_prev_pyr.download(dmatPrevHost.data, dmat_prev_pyr.colsBytes());
+            Mat dmPh8u;
+            dmatPrevHost.convertTo(dmPh8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+            imshow("each-iter-dmPH8u", dmPh8u);
+            waitKey(01);
+
+            device::createVMap(intr(level_index), dmat_prev_pyr, vmap_g_prev); //vmap_g_prev 暂不是 global, 下面再转换
+            computeNormalsEigen(vmap_g_prev, nmap_g_prev);
+            device::tranformMaps(vmap_g_prev, nmap_g_prev, device_Rcurr, device_tcurr, vmap_g_prev, nmap_g_prev); //此处应确实为 global 了
+                //其实不必 cam->global, 直接 .cu 中 search() 使用 v/nprev_cc 即可, 但为了保持与之前程序逻辑的相似性, 多转换一步到 global //2016-5-26 17:10:21
+
+            nmap_g_prev_choose_ = nmap_g_prev; //为了在 app 中调试绘制
+#endif //GCOO_2_CAMCOO
 
             Eigen::Matrix<double, 6, 6, Eigen::RowMajor> A;
             Eigen::Matrix<double, 6, 1> b;
@@ -614,6 +849,14 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             if(icp_orig_){
                 estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
                     vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
+
+                //zhangxaochen: 尝试调试 g2c 错误, R/t_prev 改用 curr, 并去掉 e-c.cu 中 g2c 部分, 验证错误源于 cpp 还是 cu, 
+                //若不再 reset, 说明错误在 cu, 否则在 cpp  //2016-5-29 00:37:09
+                //Matrix3frm Rcurr_inv = Rcurr.inverse ();
+                //Mat33&  device_Rcurr_inv = device_cast<Mat33> (Rcurr_inv);
+                //estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rcurr_inv, device_tcurr, intr (level_index),
+                //                                                                                //区别：↑-----------↑
+                //    vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data ());
             }
             else if(icp_sgf_cpu_){
                 {
@@ -670,11 +913,14 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                 //为了能够把对应点按照要求传进去，做两个事
                 //1、重新排序，现在是xyzxyz...，改成xxx..yyy..zzz..
                 //2、除以当前map的列数，去掉余出来的部分
+
+                
+                vector<float> cores_n_prev_new,cores_v_prev_new,cores_v_curr_new;
+#if 0 //sgf 去尾生成 xx_new 方式
                 int contour_size=cores_v_curr.size()/3/int(vmap_curr.cols())*int(vmap_curr.cols());
                 if(level_index == 0 && iter == iter_num - 1)
                     printf("contour_size: %d, %d\n", contour_size, cores_v_curr.size()/3);
 
-                vector<float> cores_n_prev_new,cores_v_prev_new,cores_v_curr_new;
                 for (int k1=0;k1<3;++k1)
                 {
                     for (int k2=0;k2<contour_size;++k2)
@@ -684,6 +930,28 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                         cores_n_prev_new.push_back(cores_n_prev[k2*3+k1]);
                     }
                 }
+#else //zhangxaochen: 上面实际往往xx_new.size()=0, 因为corresp<640个点对, 不好, 改为全加进去, 末尾填qnan //2016-3-27 16:51:44
+                int contSz = cores_v_curr.size()/3;
+                int qnanNum = vmap_curr.cols() - contSz % vmap_curr.cols();
+                const float qnan = numeric_limits<float>::quiet_NaN();
+
+                for(int k1=0;k1<3;++k1){
+                    for(int k2=0;k2<contSz;++k2){
+                        cores_v_curr_new.push_back(cores_v_curr[k2*3+k1]);
+                        cores_v_prev_new.push_back(cores_v_prev[k2*3+k1]);
+                        cores_n_prev_new.push_back(cores_n_prev[k2*3+k1]);
+                    }
+                    //尾部填充qnan：
+                    for(int k2=0;k2<qnanNum;++k2){
+                        cores_v_curr_new.push_back(qnan);
+                        cores_v_prev_new.push_back(qnan);
+                        cores_n_prev_new.push_back(qnan);
+                    }
+                }
+                if(level_index == 0 && iter == iter_num - 1)
+                    cout<<"cores_v_curr_new.size()/3, cores_v_curr.size()/3: "<<cores_v_curr_new.size()/3<<", "<<cores_v_curr.size()/3<<endl;
+#endif //生成 xx_new 方式
+
                 if (cores_v_curr_new.size()==0)
                     //if (1)
                 {
@@ -702,11 +970,11 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
                     nmap_candidate.download(tmp,step);
 
                     estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, vmap_contour, vmap_candidate, nmap_candidate, device_Rprev_inv, device_tprev, intr (level_index),
-                        vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data (),2.0);
+                        vmap_g_prev, nmap_g_prev, distThres_, angleThres_, gbuf_, sumbuf_, A.data (), b.data (),this->contWeight_);
                 }
 
-                }//ScopeTimeMicroSec
-            }
+                }//ScopeTimeMicroSec time("|-icp_sgf_cpu_"); //35ms (*19=665ms)
+            }//else if(icp_sgf_cpu_)
             else if(icp_cc_inc_weight){
                 zc::computeContours(depths_curr_[level_index], contMsk_);
                 estimateCombined (device_Rcurr, device_tcurr, vmap_curr, nmap_curr, device_Rprev_inv, device_tprev, intr (level_index),
@@ -719,9 +987,9 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 
             //sunguofei
             Eigen::Matrix<double,6,6,Eigen::RowMajor>::EigenvaluesReturnType eigenvalues = A.eigenvalues();
-            cond=eigenvalues(0,0).real()/eigenvalues(5,0).real();
+            condNum=eigenvalues(0,0).real()/eigenvalues(5,0).real();
             //cout << "eigenvalues: " << eigenvalues << endl;
-            cond=sqrt(cond);
+            condNum=sqrt(condNum);
             //cout<<"condition of A: "<<cond<<endl;
 //             if (cond>100)
 //             {
@@ -729,10 +997,31 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
 //                 break;
 //             }
 
-            if(hint && cond > condThresh){
-                cond = INVALID_COND;
-                illCondMat = true;
-                break; //仍然往下走，算一下
+            if(callCnt % 10 == 0 || illCondMat_ //若 illCondMat_, 仍能在同一 level_index 中过一遍不同 iter
+                || 128<callCnt && callCnt<134 //针对数据 @monitor-0714-1
+                || callCnt<100 //针对调试数据, 如大平面仅几帧 2016-7-17 21:25:24
+                )
+                cout<<"condNum: "<<condNum<<"; eigenvalues: "<<eigenvalues.transpose()<<"; det(A): "<<det<<endl;
+
+            //if(hint && condNum > condThresh){
+            if(hint){
+                static int callCntFlag = callCnt; //当前一轮迭代内的标记, 若 condNum > condThresh 则标记, 以便一轮迭代内持续输出调试信息 //2016-7-14 00:30:17
+                if(callCntFlag == callCnt)
+                    cout<<"condNum: "<<condNum<<"; eigenvalues: "<<eigenvalues.transpose()<<"; det(A): "<<det<<endl;
+
+                if(condNum > condThresh){
+                    if(callCntFlag != callCnt){
+                        cout<<"illCondMat_ = true; level_index, iter:= "<<level_index<<", "<<iter<<endl
+                            <<"condNum: "<<condNum<<"; eigenvalues: "<<eigenvalues.transpose()<<"; det(A): "<<det<<endl;
+                    }
+
+                    callCntFlag = callCnt;
+                    //condNum = INVALID_COND;
+                    illCondMat_ = true;
+                    //break; //仍然往下走，算一下
+                }
+                else
+                    illCondMat_ = false;
             }
 
             if (fabs (det) < 1e-15 || pcl_isnan (det))
@@ -767,20 +1056,36 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
             Eigen::Matrix3f Rinc = (Eigen::Matrix3f)AngleAxisf (gamma, Vector3f::UnitZ ()) * AngleAxisf (beta, Vector3f::UnitY ()) * AngleAxisf (alpha, Vector3f::UnitX ());
             Vector3f tinc = result.tail<3> ();
 
+//             cout<<"Rinc, tinc:"<<endl
+//                 <<Rinc<<endl
+//                 <<tinc<<endl;
+
             //compose
             tcurr = Rinc * tcurr + tinc;
             Rcurr = Rinc * Rcurr;
-//             if(illCondMat)
-//                 break; //仍然往下走，算一下
           }//for-iter
         }//for-level_index
       }
+
+      //zhangxaochen: 调试: csvDeltaRcurr_ 怎样才正确。
+      if(70<callCnt && callCnt<80 || 335<callCnt && callCnt<345){ //针对数据 @monitor-0708-0
+          cout<<"R-prev & hint_init_back & curr:\n"
+              <<Rprev<<endl<<endl
+              <<Rcurr_back<<endl<<endl
+              <<Rcurr<<endl<<endl;
+      }
+      if(128<callCnt && callCnt<134){ //针对数据 @monitor-0714-1
+          Eigen::Quaternionf q (Rcurr);
+          cout<<"+++++++++++++++t+Rcurr: "<< tcurr[0] << "," << tcurr[1] << "," << tcurr[2] << "," << q.w () << "," << q.x () << "," << q.y ()<< ","  << q.z () << std::endl;
+      }
+
       //save tranform
       //if (cond>1e5)
-      if(hint && illCondMat)
+      if(hint && imud_ && illCondMat_)
       {
           rmats_.push_back (Rcurr_back);
-          tvecs_.push_back (tcurr_back);
+          //tvecs_.push_back (tcurr_back);
+          tvecs_.push_back (tcurr); //t仍用 ICP 的结果, 尽管 hint=true 且 illCondMat_
       }
       else
       {
@@ -796,9 +1101,14 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
   {
       if (global_time_ == 0)
         ++global_time_;
+#if 0   //kinfu 原代码, 感觉实现无意义, 错的? 暂时替换掉 //2016-5-9 01:12:07
 
       Matrix3frm Rcurr = rmats_[global_time_ - 1];
       Vector3f   tcurr = tvecs_[global_time_ - 1];
+#elif 1 //用 hint, 命令行参数同时用 -csv_rt_hint -icp 0 时候, 启用此处:
+      Matrix3frm Rcurr = hint->rotation();
+      Vector3f tcurr = hint->translation();
+#endif
 
       rmats_.push_back (Rcurr);
       tvecs_.push_back (tcurr);
@@ -821,6 +1131,11 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
   if (disable_icp_)
     integrate = true;
 
+  if(illCondMat_){ //zhangxaochen //2016-7-12 17:08:11
+      cout<<"illCondMat_=true, not integrating+++++++++++++++"<<endl;
+      integrate = false;
+  }
+
   ///////////////////////////////////////////////////////////////////////////////////////////
   // Volume integration
   float3 device_volume_size = device_cast<const float3> (tsdf_volume_->getSize());
@@ -840,7 +1155,17 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
   Mat33& device_Rcurr = device_cast<Mat33> (Rcurr);
   {
     //ScopeTime time("ray-cast-all");
-    raycast (intr, device_Rcurr, device_tcurr, tsdf_volume_->getTsdfTruncDist(), device_volume_size, tsdf_volume_->data(), vmaps_g_prev_[0], nmaps_g_prev_[0]);
+    raycast (intr, device_Rcurr, device_tcurr, tsdf_volume_->getTsdfTruncDist(), device_volume_size, tsdf_volume_->data(), vmap_g_model_, nmap_g_model_);
+
+    if(regObjId_ == 0 || regObjId_ == 3){ //=0, 3 都用原 tsdf_volume_ 做投射
+        //raycast (intr, device_Rcurr, device_tcurr, tsdf_volume_->getTsdfTruncDist(), device_volume_size, tsdf_volume_->data(), vmaps_g_prev_[0], nmaps_g_prev_[0]);
+        vmaps_g_prev_[0] = vmap_g_model_;
+        nmaps_g_prev_[0] = nmap_g_model_;
+    }
+    else if(regObjId_ == 1) //=1时, 用影子 TSDF 做投射
+        raycast (intr, device_Rcurr, device_tcurr, tsdf_volume_shadow_->getTsdfTruncDist(), device_volume_size, tsdf_volume_shadow_->data(), vmaps_g_prev_[0], nmaps_g_prev_[0]);
+    else if(regObjId_ == 2) //TODO, 尚未实现 2016-4-21 10:22:52
+        ;
     for (int i = 1; i < LEVELS; ++i)
     {
       resizeVMap (vmaps_g_prev_[i-1], vmaps_g_prev_[i]);
@@ -863,7 +1188,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       //重新计算 nmap_g 流程：
       //volume->[raycast]->genDepth->[zc::inpaint]->inpaintDmat->[createVmap]->vmap_cam_coo->[transformVmap]->vmap_g->[computeNormalsEigen]->nmap_g
       Affine3f prevPose = this->getCameraPose();
-      pRaycaster_->run(this->volume(), prevPose); //此时必为 i-1 相机姿态, 因为 i 帧姿态还没求出来
+      pRaycaster_->run(this->volume(), prevPose); //前面ICP已经得到 curr_R,t, 所以是第 i 帧姿态, 但是对于下一帧来说算是 (i-1) //2016-5-12 16:45:24
+#if 0   //按 pcc 论文 p4/7 左上角说法, 用的是: inpainted depth image ^D'_(i-1), 太曲折, 不 inp 又怎样?
       DepthMap genDepthPrev, genDepthPrevInp;
       pRaycaster_->generateDepthImage(genDepthPrev); //i-1 相机视角深度图
       //Mat genDepthPrevHost(genDepthPrev.rows(), genDepthPrev.cols(), CV_16UC1);
@@ -904,6 +1230,9 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       //computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_choose_); //出错，因前面 nmap_g_prev_choose_ = nmaps_g_prev_[0]; 这里又写其内存
       computeNormalsEigen(vmap_g_prev_inp, nmap_g_prev_inp);
       nmap_g_prev_choose_ = nmap_g_prev_inp;
+#elif 01
+      nmap_g_prev_choose_ = pRaycaster_->getNormalMap();
+#endif
 
 #if 0     //---------------上面结果不太对， 换思路： vmap_cam ->nmap_cam ->nmap_g //结果同上，舍弃；看起来边缘更鲁棒*一点*
       MapArr nmap_prev_inp;
@@ -927,13 +1256,24 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       Matrix3frm Rrm = prevPose.linear();
       const Mat33 &device_Rrm = device_cast<const Mat33>(Rrm);
 
-      Mat depth_prev_host=Mat::zeros(genDepthPrevInp.rows(),genDepthPrevInp.cols(),CV_16U);
-      genDepthPrevInp.download(depth_prev_host.data,depth_prev_host.cols*depth_prev_host.elemSize());
-      Mat kx,ky;
-      getDerivKernels(kx,ky,1,0,7);
+      Mat genDprevInpHost=Mat::zeros(genDepthPrevInp.rows(),genDepthPrevInp.cols(),CV_16U);
+      genDepthPrevInp.download(genDprevInpHost.data,genDprevInpHost.cols*genDprevInpHost.elemSize());
+
+      Mat genDprevHost(genDepthPrev.rows(), genDepthPrev.cols(), CV_16U);
+      genDepthPrev.download(genDprevHost.data, genDepthPrev.colsBytes());
+      Mat genDprev8u, genDprevInp8u;
+      genDprevHost.convertTo(genDprev8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+      genDprevInpHost.convertTo(genDprevInp8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+      imshow("genDprevInp8u", genDprevInp8u);
+
+//       Mat kx,ky;
+//       getDerivKernels(kx,ky,1,0,7);
+//       cout<<"kx, ky:\n"
+//           <<kx<<endl
+//           <<ky<<endl;
       Mat grandient_x,grandient_y;
-      Sobel(depth_prev_host,grandient_x,CV_32F,1,0,7,1.0/1280);
-      Sobel(depth_prev_host,grandient_y,CV_32F,0,1,7,1.0/1280);
+      Sobel(genDprevInpHost,grandient_x,CV_32F,1,0,7,1.0/1280);
+      Sobel(genDprevInpHost,grandient_y,CV_32F,0,1,7,1.0/1280);
       //cout<<grandient_y<<endl;
       MapArr grandient_x_device,grandient_y_device;
       grandient_x_device.upload(grandient_x.data,grandient_x.cols*grandient_x.elemSize(),grandient_x.rows,grandient_x.cols);
@@ -949,6 +1289,7 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
       MapArr prev_normals_word_coo;
       zc::transformVmap(prev_normals,device_Rrm,t_tmp,prev_normals_word_coo);
       Mat prev_normal_show=zc::nmap2rgb(prev_normals_word_coo);
+      imshow("prev_normal_show", prev_normal_show);
 
       nmap_g_prev_choose_ = prev_normals_word_coo;
   }
@@ -956,7 +1297,8 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
   //sunguofei
   {
       //根据得到的世界坐标系下的上一帧的vmap，计算相机姿态下的深度图
-      device::generateDepth(device_Rcurr_inv,device_tcurr,vmaps_g_prev_[0],depths_prev_[0]);
+      //device::generateDepth(device_Rcurr_inv,device_tcurr,vmaps_g_prev_[0],depths_prev_[0]);
+      device::generateDepth(device_Rcurr_inv,device_tcurr,vmap_g_model_,depths_prev_[0]); //model
       //这里按照contour cue论文的方法再修补一下深度图
       zc::inpaintGpu(depths_prev_[0], depths_prev_[0]);
       pcl::device::sync();
@@ -964,7 +1306,25 @@ pcl::gpu::KinfuTracker::operator() (const DepthMap& depth_raw,
   for (int i = 1; i < LEVELS; ++i)
       device::pyrDown (depths_prev_[i-1], depths_prev_[i]);
 
+  Mat dcurrRawHost = Mat::zeros(depth_raw.rows(), depth_raw.cols(), CV_16UC1);
+  depth_raw.download(dcurrRawHost.data, depth_raw.colsBytes());
 
+  Mat gradu, gradv;
+  Sobel(dcurrRawHost,gradu,CV_32F,1,0,7,1.0/1280);
+  Sobel(dcurrRawHost,gradv,CV_32F,0,1,7,1.0/1280);
+
+  MapArr gradu_device,gradv_device;
+  gradu_device.upload(gradu.data, gradu.cols * gradu.elemSize(), gradu.rows, gradu.cols);
+  gradv_device.upload(gradv.data, gradv.cols * gradv.elemSize(), gradv.rows, gradv.cols);
+
+  //zc::align2dmapsGPU(depth_raw_prev_, intr, depth_raw, gradu_device, gradv_device);
+  
+  Mat dprevRawHost = Mat::zeros(depth_raw_prev_.rows(), depth_raw_prev_.cols(), CV_16UC1);
+  depth_raw_prev_.download(dprevRawHost.data, depth_raw_prev_.colsBytes());
+  //zc::align2dmapsCPU(dprevRawHost, intr, dcurrRawHost, gradu, gradv);
+
+  depth_raw.copyTo(depth_raw_prev_); //保存raw, 在下一帧使用
+  
   ++global_time_;
   return (true);
 }
@@ -1033,7 +1393,10 @@ pcl::gpu::KinfuTracker::getImage (View& view) const
   light.pos[0] = device_cast<const float3>(light_source_pose);
 
   view.create (rows_, cols_);
-  generateImage (vmaps_g_prev_[0], nmaps_g_prev_[0], light, view);
+  //generateImage (vmaps_g_prev_[0], nmaps_g_prev_[0], light, view);
+  //zhangxaochen: 启用 regObjId_ 之后, vmaps_g_prev_ 会随参数改变, 故此处改为每次重新投射 TSDF
+  //raycast (intr, device_Rcurr, device_tcurr, tsdf_volume_->getTsdfTruncDist(), device_volume_size, tsdf_volume_->data(), vmaps_g_prev_[0], nmaps_g_prev_[0]); //缺乏必要intr, pose 参数, 放弃
+  generateImage (vmap_g_model_, nmap_g_model_, light, view);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1042,7 +1405,19 @@ pcl::gpu::KinfuTracker::getLastFrameCloud (DeviceArray2D<PointType>& cloud) cons
 {
   cloud.create (rows_, cols_);
   DeviceArray2D<float4>& c = (DeviceArray2D<float4>&)cloud;
-  device::convert (vmaps_g_prev_[0], c);
+  //device::convert (vmaps_g_prev_[0], c);
+
+  //zhangxaochen: vmaps_g_prev_ 是模型投影vmap, 改为仅显示世界（not相机）坐标系当前帧 curr
+  Affine3f pose = this->getCameraPose();
+  Matrix3frm Rrm = pose.linear();
+  Vector3f t = pose.translation();
+  const Mat33 &device_Rrm = device_cast<const Mat33>(Rrm);
+  const float3 &device_t = device_cast<const float3>(t);
+
+  MapArr vmap_g_curr;
+  zc::transformVmap(vmaps_curr_[0], device_Rrm, device_t, vmap_g_curr);
+  device::convert(vmap_g_curr, c);
+
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

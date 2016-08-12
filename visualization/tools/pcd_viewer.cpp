@@ -57,6 +57,11 @@
 #include <pcl/search/kdtree.h>
 #include <vtkPolyDataReader.h>
 
+//zhangxaochen:
+#include <pcl/range_image/range_image.h>
+#include <pcl/range_image/range_image_planar.h>
+#include <pcl/visualization/range_image_visualizer.h>
+
 using namespace pcl::console;
 
 typedef pcl::visualization::PointCloudColorHandler<pcl::PCLPointCloud2> ColorHandler;
@@ -154,6 +159,11 @@ std::vector<boost::shared_ptr<pcl::visualization::ImageViewer> > imgs;
 pcl::search::KdTree<pcl::PointXYZ> search;
 pcl::PCLPointCloud2::Ptr cloud;
 pcl::PointCloud<pcl::PointXYZ>::Ptr xyzcloud;
+
+//zhangxaochen:
+pcl::visualization::RangeImageVisualizer rngImgWidget("range-image");
+pcl::RangeImagePlanar rngImgPlanar;
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz (new pcl::PointCloud<pcl::PointXYZ>);
 
 void
 pp_callback (const pcl::visualization::PointPickingEvent& event, void* cookie)
@@ -502,8 +512,8 @@ main (int argc, char** argv)
         Eigen::Matrix3f rotation;
         rotation = orientation;
         p->setCameraPosition (origin [0]                  , origin [1]                  , origin [2],
-                              origin [0] + rotation (0, 2), origin [1] + rotation (1, 2), origin [2] + rotation (2, 2),
-                                           rotation (0, 1),              rotation (1, 1),              rotation (2, 1));
+            origin [0] + rotation (0, 2), origin [1] + rotation (1, 2), origin [2] + rotation (2, 2),
+            rotation (0, 1),              rotation (1, 1),              rotation (2, 1));
       }
     }
 
@@ -541,7 +551,14 @@ main (int argc, char** argv)
     // Add the cloud to the renderer
     //p->addPointCloud<pcl::PointXYZ> (cloud_xyz, geometry_handler, color_handler, cloud_name.str (), viewport);
     p->addPointCloud (cloud, geometry_handler, color_handler, origin, orientation, cloud_name.str (), viewport);
+//     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz (new pcl::PointCloud<pcl::PointXYZ>); //zhangxaochen: 试图对比不用 origin, orientation 参数的效果
+//     pcl::fromPCLPointCloud2 (*cloud, *cloud_xyz);
+//     p->addPointCloud<pcl::PointXYZ> (cloud_xyz, geometry_handler, color_handler, cloud_name.str (), viewport);
 
+    //尝试生成 rangeImage, 2016-6-11 20:38:14
+    //pcl::RangeImage rangeImage;// = new pcl::RangeImage;
+    //rangeImage.createFromPointCloud(cloud);
+    pcl::fromPCLPointCloud2 (*cloud, *cloud_xyz);
 
     if (mview)
       // Add text with file name
@@ -710,6 +727,21 @@ main (int argc, char** argv)
   {
     cloud.reset ();
     xyzcloud.reset ();
+  }
+
+  //zhangxaochen: 因为自己加了 range image, 要另写 spin:
+  while(!(p->wasStopped() || rngImgWidget.wasStopped())){
+      p->spinOnce();
+
+      //p->getViewerPose()
+      Eigen::Affine3f pose = p->getViewerPose();
+      cout<<"getViewerPose:\n"<<pose.matrix()<<endl;
+      rngImgPlanar.createFromPointCloudWithFixedSize(*cloud_xyz, 640, 480, 320, 240, 525.5f, 525.5f, pose);
+      rngImgWidget.showRangeImage(rngImgPlanar, 0, 3, true);
+
+      rngImgWidget.spinOnce();
+      pcl_sleep (0.01);
+
   }
 
   // If we have been given images, create our own loop so that we can spin each individually

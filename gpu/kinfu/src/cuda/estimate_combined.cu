@@ -114,6 +114,63 @@ namespace pcl
       __device__ __forceinline__ bool
       search (int x, int y, float3& n, float3& d, float3& s) const
       {
+//#ifdef GCOO_2_CAMCOO //g2c
+#if 0
+          //若 GCOO_2_CAMCOO, 外面 v/nmap_g_prev 是在当前视点下获得的, 所以此处不必如 kinfu.orig 那样做 cam_curr->world->cam_prev 两次转换
+          float3 ncurr;
+          ncurr.x = nmap_curr.ptr(y)[x];
+          if(isnan(ncurr.x))
+              return false;
+
+          ncurr.y = nmap_curr.ptr(y+rows)[x];
+          ncurr.z = nmap_curr.ptr(y+2*rows)[x];
+
+          float3 vcurr;
+          vcurr.x = vmap_curr.ptr(y)[x];
+          vcurr.y = vmap_curr.ptr(y+rows)[x];
+          vcurr.z = vmap_curr.ptr(y+2*rows)[x];
+
+          //这里不需要像 kinfu.orig 那样求解 ukr 像素坐标, 直接用 [x,y]
+          float3 nprev_g;
+          nprev_g.x = nmap_g_prev.ptr(y)[x];
+          if(isnan(nprev_g.x))
+              return false;
+
+          nprev_g.y = nmap_g_prev.ptr(y+rows)[x];
+          nprev_g.z = nmap_g_prev.ptr(y+2*rows)[x];
+
+          float3 vprev_g;
+          vprev_g.x = vmap_g_prev.ptr(y)[x];
+          vprev_g.y = vmap_g_prev.ptr(y+rows)[x];
+          vprev_g.z = vmap_g_prev.ptr(y+2*rows)[x];
+
+          //这里求 Rcurr.inv, 放在 kernel 里会低效, 但是暂时不管
+          Mat33 Rcurr_inv = Rcurr; //以下做转置, 求逆矩阵：
+          Rcurr_inv.data[0].y = Rcurr.data[1].x; //21->12
+          Rcurr_inv.data[0].z = Rcurr.data[2].x; //31->13
+          Rcurr_inv.data[1].z = Rcurr.data[2].y; //32->23
+
+          Rcurr_inv.data[1].x = Rcurr.data[0].y; //12->21
+          Rcurr_inv.data[2].x = Rcurr.data[0].z; //13->31
+          Rcurr_inv.data[2].y = Rcurr.data[1].z; //23->32
+
+          float3 vprev_cc = Rcurr_inv * (vprev_g - tcurr); //cc: curr-cam_coo
+          float3 nprev_cc = Rcurr_inv * nprev_g;
+
+          float dist = norm (vcurr - vprev_cc);
+          if (dist > distThres)
+              return false;
+
+          float sine = norm (cross (ncurr, nprev_cc));
+          if (sine >= angleThres)
+              return false;
+
+          n = nprev_cc;
+          d = vprev_cc;
+          s = vcurr; //这三个赋值会不会导致错误? 暂时认为不会 【未测试】
+          return true;
+
+#else //kinfu.orig
         float3 ncurr;
         ncurr.x = nmap_curr.ptr (y)[x];
 
@@ -132,6 +189,11 @@ namespace pcl
         int2 ukr;         //projection
         ukr.x = __float2int_rn (vcurr_cp.x * intr.fx / vcurr_cp.z + intr.cx);      //4
         ukr.y = __float2int_rn (vcurr_cp.y * intr.fy / vcurr_cp.z + intr.cy);                      //4
+
+        //测试: 外部传参 Rprev_inv == Rcurr_inv 之后, 是否这里不必重新计算?   //2016-5-29 15:19:37
+        //答: 正确！
+        //ukr.x = x;
+        //ukr.y = y;
 
         if (ukr.x < 0 || ukr.y < 0 || ukr.x >= cols || ukr.y >= rows || vcurr_cp.z < 0)
           return (false);
@@ -167,14 +229,18 @@ namespace pcl
         d = vprev_g;
         s = vcurr_g;
         return (true);
+#endif //GCOO_2_CAMCOO
       }
 
-      //sunguofei---contour cue
+      //sunguofei---contour cue //zhangxaochen: 1. 原来只是填充, 匹配对应点是在 cu 之外做的; 2. 稍改为: 增加 !qnan 判定 //2016-3-27 17:05:43
       __device__ __forceinline__ bool
       search_contourCue (int x, int y, float3& n, float3& d, float3& s) const
       {
         float3 vcurr;
         vcurr.x = vmap_contour.ptr (y       )[x];
+        if(isnan(vcurr.x)) //cores_v_curr_new @kinfu.cpp 做了qnan填充, 因此此处要过滤
+            return (false);
+            ;
         vcurr.y = vmap_contour.ptr (y + rows_contour)[x];
         vcurr.z = vmap_contour.ptr (y + 2 * rows_contour)[x];
 

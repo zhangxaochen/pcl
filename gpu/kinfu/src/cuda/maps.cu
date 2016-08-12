@@ -368,7 +368,7 @@ pcl::device::convert (const MapArr& vmap, DeviceArray2D<T>& output)
 
 template void pcl::device::convert (const MapArr& vmap, DeviceArray2D<float4>& output);
 template void pcl::device::convert (const MapArr& vmap, DeviceArray2D<float8>& output);
-//zhangxaochen:
+//zhangxaochen: //float3 版本的特化
 template void pcl::device::convert (const MapArr& vmap, DeviceArray2D<float3>& output);
 
 namespace pcl

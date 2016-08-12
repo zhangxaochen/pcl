@@ -3,7 +3,8 @@ data/
 _build*/
 build/
 build*/
-
+*-build.vc10*/
+*.vcxproj*
 
 
 #################

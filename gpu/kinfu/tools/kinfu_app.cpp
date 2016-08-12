@@ -79,7 +79,10 @@
 //zhangxaochen:
 //using namespace cv;
 #include "contour_cue_impl.h"
+#include "syn_model_impl.h" //2016-4-5 04:20:53
 #include "zcUtility.h"
+#include "test_cuda.h"
+#include "test_ns.h"
 
 //#include "video_recorder.h"
 #endif
@@ -247,6 +250,43 @@ namespace zc{
             PCL_THROW_EXCEPTION(pcl::IOException, "ZC: no *" + ext + " files in current directory!\n");
         return res;
     }//getFnamesInDir
+
+    using namespace cv;
+    //@brief cv::erode 的弱化版: 规则为, px 的 radius 邻域内有零值, px=0; 否则不动
+    //void erode0(InputArray src, OutputArray dst, int radius = 0){
+    void erode0(Mat srcMat, Mat dstMat, int radius = 0){
+        //Mat srcMat = src.getMat(); //之前的 InputArray 方式
+        //dst.create(src.size(), src.type());
+        //Mat dstMat = dst.getMat();
+        
+        //for(size_t i = 0; i < srcMat.rows; i++){
+        //    for(size_t j = 0; j < srcMat.cols; j++){
+        //        bool found0 = false;
+        //        //遍历邻域：
+        //        for(size_t i0 = min(0, i-radius); i0 < max(srcMat.rows, i+radius) && !found0; i0++){
+        //            for(size_t j0 = min(0, j-radius); j0 < max(srcMat.cols, j+radius) && !found0; j0++){
+        //                if(srcMat.at<ushort>(i0, j0) == 0)
+        //                    found0 = true;
+        //            }
+        //        }
+
+        //        //dstMat.at
+        //    }
+        //}
+
+        Mat mask = srcMat > 0; //获取二值图蒙版
+        //腐蚀二值图：
+        int erosion_type = MORPH_RECT;
+        Mat eroElement = getStructuringElement( erosion_type,
+            Size( 2*radius + 1, 2*radius+1 ),
+            Point( radius, radius ) );
+
+        erode(mask, mask, eroElement);
+        
+        //srcMat.copyTo(dstMat, mask); //若 dstMat 原本==src, 则此句无 erode 效果, 弃用
+        srcMat.copyTo(dstMat);
+        dstMat.setTo(0, mask==0);
+    }//erode0
 
 }//namespace zc
 
@@ -710,7 +750,8 @@ struct KinFuApp
   
   KinFuApp(pcl::Grabber& source, float vsz, int icp, int viz, boost::shared_ptr<CameraPoseProcessor> pose_processor=boost::shared_ptr<CameraPoseProcessor> () ) : exit_ (false), scan_ (false), scan_mesh_(false), scan_volume_ (false), independent_camera_ (false),
       registration_ (false), integrate_colors_ (false), pcd_source_ (false), focal_length_(-1.f), capture_ (source), scene_cloud_view_(viz), image_view_(viz), time_ms_(0), icp_(icp), viz_(viz), pose_processor_ (pose_processor)
-      ,png_source_(false), fid_(0)
+      ,png_source_(false), fid_(0), isReadOn_(false), dmatErodeRadius_(0)
+      ,edgeViewer_("edgeViewer")
   {    
     //Init Kinfu Tracker
     Eigen::Vector3f volume_size = Vector3f::Constant (vsz/*meters*/);    
@@ -718,6 +759,8 @@ struct KinFuApp
 
     Eigen::Matrix3f R = Eigen::Matrix3f::Identity ();   // * AngleAxisf( pcl::deg2rad(-30.f), Vector3f::UnitX());
     Eigen::Vector3f t = volume_size * 0.5f - Vector3f (0, 0, volume_size (2) / 2 * 1.2f);
+    //zhangxaochen: 减小volume尺寸后, 初始相机位置也要改    //2016-3-17 10:41:14
+    //t = Vector3f (volume_size(0)/2, volume_size(1)/2, -0.5);
 
     Eigen::Affine3f pose = Eigen::Translation3f (t) * Eigen::AngleAxisf (R);
 
@@ -742,7 +785,14 @@ struct KinFuApp
 
         scene_cloud_view_.toggleCube(volume_size);
     }
-  }
+
+    //虚拟立方体可视化  //2016-4-10 21:54:54
+    edgeViewer_.setBackgroundColor (0, 0, 0);
+    edgeViewer_.addCoordinateSystem();
+    edgeViewer_.initCameraParameters();
+    edgeViewer_.setSize(640, 480);
+    edgeViewer_.setCameraClipDistances (0.01, 10.01);
+  }//KinFuApp-ctor
 
   ~KinFuApp()
   {
@@ -788,10 +838,14 @@ struct KinFuApp
         float cx = depth_intrinsics[2];
         float cy = depth_intrinsics[3];
         kinfu_.setDepthIntrinsics(fx, fy, cx, cy);
+        //zhangxaochen: pRaycaster_ 是我专用, 要注意设定内参    //2016-5-12 11:51:54
+        kinfu_.pRaycaster_->setIntrinsics(fx, fy, cx, cy);
         cout << "Depth intrinsics changed to fx="<< fx << " fy=" << fy << " cx=" << cx << " cy=" << cy << endl;
     }
     else {
         kinfu_.setDepthIntrinsics(fx, fy);
+        //zhangxaochen: pRaycaster_ 是我专用, 要注意设定内参    //2016-5-12 11:51:54
+        kinfu_.pRaycaster_->setIntrinsics(fx, fy);
         cout << "Depth intrinsics changed to fx="<< fx << " fy=" << fy << endl;
     }
   }
@@ -843,25 +897,37 @@ struct KinFuApp
     Eigen::Affine3f hint;//=(Eigen::Affine3f *)0;
 
     //zhangxaochen:
-    const vector<double> &R_t = this->csvRtCurrRow_;
+    const vector<float> &R_t = this->csvRtCurrRow_;
     if(this->png_source_ && this->csv_rt_hint_){
-        Eigen::Matrix3f M_tmp;
-        Eigen::Vector3f T_tmp;
-        for (int i=0;i<3;++i)
-        {
-            T_tmp(i,0)=R_t[i]/1000;
+        kinfu_.imud_ = this->imud_;
+
+        if(!this->imud_){ //若无 imud, hint 是 csv 中当前行的值
+            Eigen::Matrix3f M_tmp;
+            Eigen::Vector3f T_tmp;
+            for (int i=0;i<3;++i)
+            {
+                T_tmp(i,0)=R_t[i]/1000; //mm->m
+            }
+            for (int i=0;i<9;++i)
+            {
+                M_tmp(i/3,i%3)=R_t[i+3];
+            }
+            //cout<<"M_tmp:"<<M_tmp<<endl; //正确！ 说明上面赋值法并不需要 row-major
+            cout<<"determinant of rotation: "<<M_tmp.determinant()<<endl;
+            hint.linear()=M_tmp;
+            hint.translation()=T_tmp;
         }
-        for (int i=0;i<9;++i)
-        {
-            M_tmp(i/3,i%3)=R_t[i+3];
+        else{ //若 imud, hint 是 i->(i-1) 的 delta 量 (忽略 tvec部分)
+            hint.linear() = this->csvDeltaRcurr_;
         }
-        cout<<"determinant of rotation: "<<M_tmp.determinant()<<endl;
-        hint.linear()=M_tmp;
-        hint.translation()=T_tmp;
     }
 
     if (has_data)
     {
+        //zhangxaochen: 用opencv 绘制相机轨迹  //2016-5-26 11:02:15
+        Affine3f poseBA = kinfu_.getCameraPose(); //BeforeAlign
+        Vector3f tvecBA = poseBA.translation();
+
       depth_device_.upload (depth.data, depth.step, depth.rows, depth.cols);
       if (integrate_colors_)
           image_view_.colors_device_.upload (rgb24.data, rgb24.step, rgb24.rows, rgb24.cols);
@@ -882,6 +948,23 @@ struct KinFuApp
           }
         }
       }
+
+      //zhangxaochen: 用opencv 绘制相机轨迹  //2016-5-26 11:02:15
+      Affine3f poseAA = kinfu_.getCameraPose();
+      Vector3f tvecAA = poseAA.translation();
+      using namespace cv;
+      static Mat tmat8u(480, 640, CV_8UC1, Scalar(0));
+      Vector3f tcenter(1.5, 1.5, 0.4); //估计了一个旋转中心点, 逻辑是 0.4-(-0.3)=0.7, 大约是最近有效距离
+
+      //暂时投影到 xz 平面, 舍弃y
+      int scaleCoeff = 150;
+      int pxXba = (tvecBA[0]-tcenter[0])*scaleCoeff+320,
+          pxYba = (tvecBA[2]-tcenter[2])*scaleCoeff+240,
+          pxXaa = (tvecAA[0]-tcenter[0])*scaleCoeff+320,
+          pxYaa = (tvecAA[2]-tcenter[2])*scaleCoeff+240;
+
+      line(tmat8u, Point(pxXba, pxYba), Point(pxXaa, pxYaa), 255);
+      imshow("camera-trajectory", tmat8u);
 
       // process camera pose
       if (pose_processor_)
@@ -925,6 +1008,7 @@ struct KinFuApp
     {
       Eigen::Affine3f viewer_pose = getViewerPose(*scene_cloud_view_.cloud_viewer_);
       image_view_.showScene (kinfu_, rgb24, registration_, independent_camera_ ? &viewer_pose : 0);
+      //image_view_.showScene (kinfu_, rgb24, registration_, &viewer_pose); //zhangxaochen
     }    
 
     if (current_frame_cloud_view_)
@@ -932,6 +1016,41 @@ struct KinFuApp
       
     if (viz_ && !independent_camera_)
       setViewerPose (*scene_cloud_view_.cloud_viewer_, kinfu_.getCameraPose());
+
+    //zhangxaochen: 可视化虚拟立方体棱边(消隐前后) //2016-4-10 21:40:57
+    if(kinfu_.edgeCloud_->size() > 0){
+        //edgeViewer_.updatePointCloud(kinfu_.edgeCloud_, "edge_all");
+        //edgeViewer_.updatePointCloud(kinfu_.edgeCloudVisible_, "edge_visible");
+        edgeViewer_.removeAllPointClouds();
+
+        const char *edgeAllId = "edge_all";
+        const char *edgeVisibleId = "edge_visible";
+#if 0   //V1, 着色方案1, 白色, 失败
+        //pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZRGB> single_color(cloud, 0, 255, 0); //样例
+        visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
+            //cgreen(kinfu_.edgeCloud_, 0, 255, 0),
+            cgreen(0, 255, 0),
+            cred(255, 0, 0);
+
+        edgeViewer_.addPointCloud(kinfu_.edgeCloud_, cgreen, edgeAllId);
+        edgeViewer_.addPointCloud(kinfu_.edgeCloudVisible_, cred, edgeVisibleId);
+#elif 1 //V2, 着色方案2, 预先转换点云类型
+        PointCloud<PointXYZRGB>::Ptr edgeCloudRgb(new PointCloud<PointXYZRGB>);
+        copyPointCloud(*kinfu_.edgeCloud_, *edgeCloudRgb);
+        visualization::PointCloudColorHandlerCustom<pcl::PointXYZRGB> cgreen(edgeCloudRgb, 0, 255, 0);
+        edgeViewer_.addPointCloud(edgeCloudRgb, cgreen, edgeAllId);
+
+        PointCloud<PointXYZRGB>::Ptr edgeCloudVisRgb(new PointCloud<PointXYZRGB>);
+        copyPointCloud(*kinfu_.edgeCloudVisible_, *edgeCloudVisRgb);
+        visualization::PointCloudColorHandlerCustom<pcl::PointXYZRGB> cred(edgeCloudVisRgb, 255, 0, 0);
+        edgeViewer_.addPointCloud(edgeCloudVisRgb, cred, edgeVisibleId);
+#endif
+        edgeViewer_.setPointCloudRenderingProperties(visualization::PCL_VISUALIZER_POINT_SIZE, 1, edgeAllId);
+        edgeViewer_.setPointCloudRenderingProperties(visualization::PCL_VISUALIZER_POINT_SIZE, 2, edgeVisibleId);
+
+        ::setViewerPose(edgeViewer_, kinfu_.getCameraPose());
+        edgeViewer_.spinOnce();
+    }
   }
   
   void source_cb1_device(const boost::shared_ptr<openni_wrapper::DepthImage>& depth_wrapper)  
@@ -940,7 +1059,7 @@ struct KinFuApp
     dbgPrint("--source_cb1_device\n\t--fid, time, baseline?: %u, %lu, %f\n", depth_wrapper->getFrameID(), depth_wrapper->getTimeStamp(), depth_wrapper->getBaseline());
 //     cout << "--source_cb1_device" << endl
 //          << "fid, time, baseline?: " << depth_wrapper->getFrameID() << ", " << depth_wrapper->getTimeStamp() << ", " << depth_wrapper->getBaseline() << endl;
-    cout << "\t--threadId: " << boost::this_thread::get_id() << endl;
+    //cout << "\t--threadId: " << boost::this_thread::get_id() << endl;
     {
       //boost::mutex::scoped_try_lock lock(data_ready_mutex_);
       //改用 阻塞锁, 不要 try-lock: 
@@ -1125,7 +1244,7 @@ struct KinFuApp
             while (!exit_ && scene_view_not_stopped && image_view_not_stopped)
             { 
                 dbgPrintln("mainloop-while, locking~");
-                cout << "threadId: " << boost::this_thread::get_id() << endl;
+                //cout << "threadId: " << boost::this_thread::get_id() << endl;
 
                 //cout << "mainloop-while, locking~" <<endl;
                 //zc: trigger 速度可能较慢, 
@@ -1170,41 +1289,83 @@ struct KinFuApp
         size_t pngVecSz = pngFnames_.size();
         for(size_t i = 0; i < pngVecSz; i++){
             string &fn = pngFnames_[i];
-            //sunguofei
+            if(synthetic_RT_.size() > 0){
+                //sunguofei
 #if 0
-            //当前读进来的RT已经是dR dt了
-            vector<double> rt=synthetic_RT[i];
+                //当前读进来的RT已经是dR dt了
+                vector<double> rt=synthetic_RT_[i];
 #else
-            //当前读进来的RT是原始的RT，并不是dR dt
-            vector<double> rt;
-            if (i==0)
-            {
-                rt=synthetic_RT[i];
-            }
-            else
-            {
-                rt.resize(12,0);
-                vector<double> rt0=synthetic_RT[i-1];
-                vector<double> rt1=synthetic_RT[i];
-                for (int j=0;j<3;++j)
-                {
-                    rt[j]=rt1[j]-rt0[j];
-                }
-                for (int j=0;j<3;++j)
-                {
-                    for (int k=0;k<3;++k)
-                    {
-                        rt[3+j*3+k]+=rt1[3+j*3+0]*rt0[3+k*3+0]+rt1[3+j*3+1]*rt0[3+k*3+1]+rt1[3+j*3+2]*rt0[3+k*3+2];
-                    }
-                }
-            }
+                //sgf: 当前读进来的RT是原始的RT，并不是dR dt
+                //zhangxaochen: 若要求 dR (是i->(i-1)), 下面全错了
+//                 vector<double> rt;
+//                 if (i==0)
+//                 {
+//                     rt=synthetic_RT_[i];
+//                 }
+//                 else
+//                 {
+//                     rt.resize(12,0);
+//                     vector<double> rt0=synthetic_RT_[i-1];
+//                     vector<double> rt1=synthetic_RT_[i];
+//                     for (int j=0;j<3;++j)
+//                     {
+//                         rt[j]=rt1[j]-rt0[j];
+//                     }
+//                     for (int j=0;j<3;++j)
+//                     {
+//                         for (int k=0;k<3;++k)
+//                         {
+//                             rt[3+j*3+k]+=rt1[3+j*3+0]*rt0[3+k*3+0]+rt1[3+j*3+1]*rt0[3+k*3+1]+rt1[3+j*3+2]*rt0[3+k*3+2];
+//                         }
+//                     }
+//                 }
 #endif
-            this->csvRtCurrRow_ = rt;
+                //this->csvRtCurrRow_ = rt; //大概是错的, 因为此处SGF的 rt 是 dR, dt //2016-5-9 00:52:04
+                //this->csvRtCurrRow_ = synthetic_RT[i]; //就表示*直接*读到的一行
+                //目前 OpencvCalib 生成一组去畸变的dmat-vec, 但是因为程序内是 WaitOneUpdateAll(rgb-img), 所以 dmat 序号跳帧, 所以此处改为以 dmat 文件名所示序号选择 csv 哪一行:	//2016-5-14 11:21:32
+                size_t pos = fn.find_last_of('.') - 4;
+                //dmat 在 oni 中实际对应的 frame ID, 起始为 1, 因为 -raw_frames/NiViewer 中的起始值都是1, 尽管 dg.GetFrameID 起始值是 0
+                int dfid = std::stoi(fn.substr(pos, 4));
+                int csvRowIdx = dfid - 1; //csv 矩阵的行号, 从0开始 (>=0)
+                CV_Assert(csvRowIdx >= 0);
+
+                this->csvRtCurrRow_ = synthetic_RT_[csvRowIdx];
+                if(this->imud_){
+                    typedef Eigen::Matrix<float, 3, 3, Eigen::RowMajor> Matrix3frm;
+                    this->csvRcurr_ = Matrix3frm(csvRtCurrRow_.data() + 3); //注意: +3 是因为 vector12 前 3 项是 tvec //【必须】是 Matrix3frm
+                    if(csvRowIdx == 0)
+                        this->csvRprev_ = Matrix3f::Identity();
+                    else
+                        this->csvRprev_ = Matrix3frm(synthetic_RT_[csvRowIdx - 1].data() + 3); //注意: 【必须】是 Matrix3frm, 因为约定 syntheticRT 是按 row-major 存储 //2016-7-13 17:37:34
+
+                    this->csvDeltaRcurr_ = csvRprev_.inverse() * csvRcurr_; //若 R 为 c->g(之前认知), 则此为 ci->c(i-1), 用于右乘, 与2014-IMU 一致
+                    //this->csvDeltaRcurr_ = csvRcurr_.inverse() * csvRprev_; //感觉错, 反而对 //因为上面误用 Matrix3f(csvRtCurrRow_.data() + 3) (col-major)
+                    //this->csvDeltaRcurr_ = csvRcurr_ * csvRprev_.inverse(); //若按 Rcurr = Rinc * Rcurr; 则 delta=Ri*R(i-1)', 用于左乘, 但在 c->g的假设下无实际物理意义
+                }
+            }
 
             printf("%s\n", fn.c_str());
 
             using namespace cv;
             Mat dmat = imread(fn, IMREAD_UNCHANGED);
+            if(this->dmatErodeRadius_ > 0){
+                Mat dmat8u;
+                dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+                imshow("dmat.orig", dmat8u);
+                //尝试腐蚀边缘, 以消除深度图边缘(不连续性)噪声  //2016-5-10 10:28:38
+                int erosion_type = MORPH_RECT;
+                //int erosion_size = 2;
+                Mat eroElement = getStructuringElement( erosion_type,
+                    //Size( 2*erosion_size + 1, 2*erosion_size+1 ),
+                    //Point( erosion_size, erosion_size ) );
+                    Size( 2*dmatErodeRadius_ + 1, 2*dmatErodeRadius_+1 ),
+                    Point( dmatErodeRadius_, dmatErodeRadius_ ) );
+
+                //erode(dmat, dmat, eroElement); //这样不行, cv::erode 原理是在 kernel 范围内选取极小值, 会导致非边缘区域像素也被改变;
+                zc::erode0(dmat, dmat, dmatErodeRadius_);
+                dmat.convertTo(dmat8u, CV_8UC1, 1.*UCHAR_MAX/1e4);
+                imshow("dmatErode", dmat8u);
+            }
 
             depth_.cols = dmat.cols;
             depth_.rows = dmat.rows;
@@ -1231,6 +1392,7 @@ struct KinFuApp
                 contMskShow = inpDmat8u.clone();
 
                 putText(inpDmat8u, "inpDmat8u", Point(0, 30), FONT_HERSHEY_PLAIN, 2, 255);
+                putText(inpDmat8u, "fid: "+to_string((long long) i), Point(0, 50), FONT_HERSHEY_PLAIN, 2, 255);
                 //imshow("inpDmat8u", inpDmat8u);
                 //dmat8u.push_back(inpDmat8u); //==vconcat
                 hconcat(dmat8u, inpDmat8u, dmat8u);
@@ -1245,6 +1407,13 @@ struct KinFuApp
                 contMskShow.setTo(UCHAR_MAX, contMskHost);
                 imshow("contMskShow", contMskShow);
                 printf("zc:contMskHost: %d\n", countNonZero(contMskHost));
+                if(this->debug_level2_){
+                    static int cmskCnt = 0;
+                    char buf[4096];
+                    sprintf(buf, "./cmsk-%06d.png", (int)cmskCnt);
+                    cv::imwrite(buf, contMskShow);
+                    cmskCnt++;
+                }
 
                 //contour-correspondence-candidate mask debug show
                 zc::MaskMap cccDevice = kinfu_.getContCorrespMask();
@@ -1252,17 +1421,40 @@ struct KinFuApp
                     Mat cccHost(cccDevice.rows(), cccDevice.cols(), CV_8UC1);
                     cccDevice.download(cccHost.data, cccHost.cols * cccHost.elemSize());
                     imshow("cccHost", cccHost);
+
+                    if(this->debug_level2_){
+                        static int cccCnt = 0;
+                        char buf[4096];
+                        sprintf (buf, "./ccc-%06d.png", (int)cccCnt);
+                        cv::imwrite (buf, cccHost);
+                        cccCnt++;
+                    }
                 }
 
                 DeviceArray2D<float> nmap_g_prev = kinfu_.getNmapGprev();
                 if(nmap_g_prev.cols() > 0){ //若有数据
                     Mat nmap_g_prev_host = zc::nmap2rgb(nmap_g_prev);
                     imshow("nmap_g_prev_host", nmap_g_prev_host);
+
+                    if(this->debug_level2_){
+                        static int nmapCnt = 0;
+                        char buf[4096];
+                        sprintf (buf, "./nmap_g_prev-%06d.png", (int)nmapCnt);
+                        cv::imwrite (buf, nmap_g_prev_host);
+                        nmapCnt++;
+                    }
+
+                    zc::Image nmapColor = zc::renderNmap2(nmap_g_prev);
+                    Mat nmapColorHost(nmapColor.rows(), nmapColor.cols(), CV_8UC3);
+                    nmapColor.download(nmapColorHost.data, nmapColorHost.cols * nmapColorHost.elemSize());
+                    imshow("nmapColorHost", nmapColorHost);
                 }
             }
-            int key = waitKey(this->png_fps_ > 0 ? int(1e3 / png_fps_) : 0);
+            int key = waitKey(this->png_fps_ > 0 && this->isReadOn_ ? int(1e3 / png_fps_) : 0);
             if(key==27) //Esc
                 break;
+            else if(key==' ')
+                this->isReadOn_ = !this->isReadOn_;
         }//for-pngFnames_
     }//else //this->png_source_ == true
 #endif //HAVE_OPENCV
@@ -1376,19 +1568,26 @@ struct KinFuApp
   bool png_source_;
   string pngDir_;
   vector<string> pngFnames_;
-  bool isReadOn_;
+  bool isReadOn_;   //之前一直没用, 现在启用, 做空格暂停控制键 2016-3-26 15:46:37
   int png_fps_;
   bool hasRtCsv_; //是否（在 pngDir_）存在 {R, t} csv 描述文件
   bool csv_rt_hint_; //是否用 csv {R, t} 做初值？（不一定用）
   bool show_gdepth_; //show-generated-depth. 是否显示当前时刻 (模型, 视角) 对应的深度图
   bool debug_level1_; //是否download并显示一些中间调试窗口？运行时效率相关
+  bool debug_level2_; //if true, imwrite 中间结果到文件, 且 debug_level1_=true (包含关系)
+  bool imud_; //是否 csv_rt_hint_ 存的是 IMUD-fusion 所需的 Rt, 其特点: 只有 rmat 有用, t=(0,0,0)
 
-  vector<double> csvRtCurrRow_; //csv 文件读到的当前一行
+  vector<float> csvRtCurrRow_; //csv 文件读到的当前一行
   //string icp_impl_str_;
+  Matrix3f csvRcurr_, csvRprev_, csvDeltaRcurr_; //仅在 imud_=true 时才初始化, 不必写 row-major //2016-7-12 15:48:50
 
+  //虚拟立方体棱边可视化  //2016-4-10 21:49:08
+  visualization::PCLVisualizer edgeViewer_;
+  
+  int dmatErodeRadius_; //深度图边缘不连续性噪声, 会导致"棱边钝化", 设定腐蚀半径, 默认0   //2016-5-10 11:11:16
 
   //sunguofei
-  vector<vector<double>> synthetic_RT;
+  vector<vector<float>> synthetic_RT_;
 
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   static void
@@ -1430,7 +1629,7 @@ struct KinFuApp
         //zhangxaochen:
       case (int)' ':
           cout << "ZC: read a frame" << endl;
-          app->isReadOn_ = true;
+          app->isReadOn_ = !app->isReadOn_;
           break;
 
       default:
@@ -1530,8 +1729,9 @@ main (int argc, char* argv[])
   //zhangxaochen:
   std::string png_dir;
   vector<string> pngFnames;
+
   //sunguofei
-  vector<vector<double>> R_t;
+  vector<vector<float>> R_t;
 
   int png_fps = 15;
 
@@ -1575,21 +1775,34 @@ main (int argc, char* argv[])
 
         //sunguofei
         ifstream synthetic_rt;
-        string path_rt=png_dir+"/syntheticRT.txt";
+        string synRtFn = "syntheticRT.txt"; //不带路径, 意味着必须放在 png_dir 目录下; 默认值xxx
+        pc::parse_argument(argc, argv, "-synRtFn", synRtFn); //尝试从命令行参数读取,替换默认值
+        string path_rt=png_dir+"/"+synRtFn;
         cout<<path_rt<<endl;
-        synthetic_rt.open(path_rt);
-        for (int i=0;i<pngFnames.size();++i)
-        {
-            vector<double> rt;
-            for (int j=0;j<12;++j)
-            {
-                double tmp;
-                synthetic_rt>>tmp;
-                rt.push_back(tmp);
-            }
-            R_t.push_back(rt);
-        }
+        //if(!boost::filesystem::exists(path_rt))
+        //    PCL_THROW_EXCEPTION (pcl::IOException, "file does not exist");
 
+        if(boost::filesystem::exists(path_rt)){
+            synthetic_rt.open(path_rt);
+            //for (int i=0;i<pngFnames.size();++i)
+            int i = 0; //用 while 替代 for, 针对当 png 是截取一部分, 而 syntheticRT.txt 是整个时   //2016-7-17 22:16:04
+            while(1)
+            {
+                if(!synthetic_rt.good()){
+                    cout<<"fstream synthetic_rt NOT good! i= "<<i<<endl;
+                    break;
+                }
+                vector<float> rt;
+                for (int j=0;j<12;++j)
+                {
+                    float tmp;
+                    synthetic_rt>>tmp;
+                    rt.push_back(tmp);
+                }
+                R_t.push_back(rt);
+                i++;
+            }
+        }
         pc::parse_argument(argc, argv, "-png-fps", png_fps);
     }
     else if (pc::parse_argument (argc, argv, "-eval", eval_folder) > 0)
@@ -1636,7 +1849,13 @@ main (int argc, char* argv[])
 
   //启用 hint(目前 png_dir -> syntheticRT.txt) 做 ICP 初值
   app.csv_rt_hint_ = pc::find_switch (argc, argv, "-csv_rt_hint");
+  app.imud_ = pc::find_switch(argc, argv, "-imud");
+
   app.debug_level1_ = pc::find_switch(argc, argv, "-dbg1");
+  app.debug_level2_ = pc::find_switch(argc, argv, "-dbg2");
+  if(app.debug_level2_){
+      app.debug_level1_=true;
+  }
 
   if(pc::find_switch(argc, argv, "--gen-depth") || pc::find_switch(argc, argv, "-gd")){
       app.show_gdepth_ = true; //似乎多余。暂时放着
@@ -1662,9 +1881,9 @@ main (int argc, char* argv[])
   }
 
   float contWeight = 1;
-  if(pc::parse_argument(argc, argv, "-cc_inc_weight", contWeight) > 0){
-      app.kinfu_.icp_sgf_cpu_ = false;
-      app.kinfu_.icp_cc_inc_weight = true;
+  if(pc::parse_argument(argc, argv, "-cc_inc_weight", contWeight) > 0 || pc::parse_argument(argc, argv, "-ccw", contWeight) > 0){
+      //app.kinfu_.icp_sgf_cpu_ = false;
+      //app.kinfu_.icp_cc_inc_weight = true;
 
       app.kinfu_.contWeight_ = contWeight;
   }
@@ -1679,7 +1898,7 @@ main (int argc, char* argv[])
   }
 
   //sunguofei
-  app.synthetic_RT=R_t;
+  app.synthetic_RT_=R_t;
 
   if (pc::parse_argument (argc, argv, "-eval", eval_folder) > 0)
     app.toggleEvaluationMode(eval_folder, match_file);
@@ -1720,6 +1939,158 @@ main (int argc, char* argv[])
         return -1;
     }   
   }
+  //+++++++++++++++配准目标物指定, 预计可以是:
+  //0. kinfu.orig 原流程, 原TSDF投射为vmap, nmap;
+  //1. 虚拟立方体cube的伴随【影子】TSDF投射得到的深度图; 优: kinfu::raycast 直接得到 vmap, nmap; 劣: 相当于压缩, edge会损失
+  //2. 我自己实现的cube-cloud 直接投射 cloud2depth, 与TSDF【无关】; 优: 可保留edge; 劣: 相当于自己实现的消隐、压缩算法, 精度未对比测量;
+  //3. cube预置到老TSDF, 与depth共同形成模型, 再投射为深度图; 优: 虚实公摊权重, 似乎更合理; 劣: 并不单独考虑cube-edge
+  int regObjId = 0;
+  if(pc::parse_argument(argc, argv, "-regObj", regObjId) > 0){
+      app.kinfu_.regObjId_ = regObjId;
+  }//if "-regObj"
+
+  //+++++++++++++++增加虚拟立方体做第0帧 2016-4-5 00:37:36
+  int synF0weight = 1;
+  pc::parse_argument(argc, argv, "-synF0wei", synF0weight);
+
+  string synModelFn; //使用已知模型做配准, 作为第0帧! 当前用虚拟立方体, 如 zcCube.ply
+  PointCloud<PointXYZ>::Ptr synModelCloudPtr(new PointCloud<PointXYZ>);
+  if(pc::parse_argument(argc, argv, "-synF0", synModelFn) > 0){
+      if(boost::ends_with(synModelFn, ".pcd")){
+          io::loadPCDFile(synModelFn, *synModelCloudPtr);
+      }
+      else if(boost::ends_with(synModelFn, ".ply")){
+          io::loadPLYFile(synModelFn, *synModelCloudPtr);
+      }
+
+      app.kinfu_.synModelCloudPtr_ = synModelCloudPtr;
+
+#if 0
+      //---------------测试写GPU内存
+      zc::test_write_gpu_mem_in_syn_cu();//√
+      return 0;
+
+      //---------------测试命名空间 namespace zc:
+      zc::foo_in_syn_cpp();//√, pcl_gpu_kinfu_debug.lib, .dll 里能搜到
+      foo_in_cc_cpp();//√, 同上
+      zc::foo_in_cc_cu();//√, contour_cue_impl.cu 这个就好好的, 为什么?
+      zctmp::foo_test_cuda();//忘了加 PCL_EXPORTS   //√
+      foo_test_no_ns();//√
+      zc::foo_in_syn_cu();//×, syn_model_impl.cu 怎么也不行 答: dllexport, √
+      zctmp::foo_test_ns_cpp(); //√
+#endif
+
+#if 01   //---------------测试 cloud2depth, 移到 kinfu_.operator() 开头:   //2016-4-8 12:19:47
+      KinfuTracker kinfu = app.kinfu_;
+      float fx, fy, cx, cy;
+      kinfu.getDepthIntrinsics(fx, fy, cx, cy);
+      pcl::device::Intr intr (fx, fy, cx, cy);
+      Affine3f pose = kinfu.getCameraPose();
+
+      cv::Mat depFromCloud;
+      {
+      zc::ScopeTimeMicroSec time("zc::cloud2depth"); //1mm.pcd, 11.8ms
+      zc::cloud2depth(*synModelCloudPtr, pose, intr, 640, 480, depFromCloud);
+      }
+      {
+      zc::ScopeTimeMicroSec time("zc::cloud2depthCPU"); //1mm.pcd, 91ms
+      //zc::cloud2depthCPU(*synModelCloudPtr, pose, intr, 640, 480, depFromCloud);//√
+      }
+      cv::Mat dfc8u(depFromCloud.rows, depFromCloud.cols, CV_8UC1);
+      double dmin, dmax;
+      minMaxLoc(depFromCloud, &dmin, &dmax);
+      depFromCloud.convertTo(dfc8u, CV_8UC1, 255./(dmax-dmin), -dmin*255./(dmax-dmin));
+      cv::imshow("dfc8u", dfc8u);
+      cv::waitKey(0);
+      return 0;
+#endif
+
+      //pcl::device::initVolume(tsdf_volume.data()); //可写, √
+      if(synModelCloudPtr->size() > 0){
+          if(regObjId == 1){ //影子TSDF
+              TsdfVolume &tsdf_volume = *app.kinfu_.tsdf_volume_shadow_;
+              zc::cloud2tsdf(*synModelCloudPtr, synF0weight, tsdf_volume);
+          }
+          else if(regObjId == 3){ //原TSDF
+              TsdfVolume &tsdf_volume = app.kinfu_.volume();
+              zc::cloud2tsdf(*synModelCloudPtr, synF0weight, tsdf_volume);
+              vector<float> tsdfHost; //仅用于统计!=0值个数, 检验 zc::cloud2tsdf 是否正确实现
+              tsdf_volume.downloadTsdf(tsdfHost);
+              int tsdfNoZeroCnt = 0;
+              for(size_t i =0; i< tsdfHost.size(); i++){
+                  if(tsdfHost[i] != 0)
+                      tsdfNoZeroCnt++;
+              }
+              cout<<"tsdfNoZeroCnt: "<<tsdfNoZeroCnt<<endl; //16494
+
+              ImageView &tview = app.image_view_; //temp 局部变量
+              
+              app.scene_cloud_view_.show(app.kinfu_, false);
+              //app.scene_cloud_view_.cloud_viewer_->spin();
+              while(!app.scene_cloud_view_.cloud_viewer_->wasStopped()){
+                  //要坐标转换：
+                  //Affine3f &pose = ::getViewerPose(*app.scene_cloud_view_.cloud_viewer_);
+                  //上面结果不对, 不知道转到哪里去了, 尝试自己转换一下:
+                  Affine3f &pose = app.scene_cloud_view_.cloud_viewer_->getViewerPose();
+                  Matrix3f axis_reorder; //注意可能是 column-major
+                  //axis_reorder << 0,  0,  1,
+                  //                 -1,  0,  0,
+                  //                  0, -1,  0;
+                  axis_reorder << -1,  0,  0, //也不行
+                                    0,  -1,  0,
+                                    0,   0, -1;
+                  //pose.linear() = pose.linear() * axis_reorder;
+
+                  //tview.raycaster_ptr_->run(tsdf_volume, )
+                  //tview.raycaster_ptr_->run(tsdf_volume, Affine3f::Identity());
+                  //tview.raycaster_ptr_->run(tsdf_volume, app.kinfu_.getCameraPose());
+                  tview.raycaster_ptr_->run(tsdf_volume, pose);
+                  tview.raycaster_ptr_->generateSceneView(tview.view_device_); //下面仿照 showScene 写的
+                  int cols;
+                  tview.view_device_.download (tview.view_host_, cols);
+                  //坐标系翻转 XY, 目前仍不懂坐标怎么回事？
+                  vector<PixelRGB> &imgVec = tview.view_host_;
+                  for(size_t i = 0; i < imgVec.size() / 2; i++){
+                      PixelRGB tmpPx = imgVec[i];
+                      int tailPos = imgVec.size() - 1 - i;
+                      imgVec[i] = imgVec[tailPos];
+                      imgVec[tailPos] = tmpPx;
+                  }
+
+                  tview.viewerScene_->showRGBImage (reinterpret_cast<unsigned char*> (&tview.view_host_[0]), tview.view_device_.cols (), tview.view_device_.rows ());
+                  app.scene_cloud_view_.cloud_viewer_->spinOnce();
+
+              }
+
+          }
+
+      }
+  }//if "-synF0"
+
+  //+++++++++++++++加载棱边下标txt文件: //2016-4-10 17:57:53
+  string edgeIdxFn;
+  if(pc::parse_argument(argc, argv, "-edgeIdx", edgeIdxFn) > 0){
+      //vector<int> edgeIdxVec;
+      vector<int> &edgeIdxVec = app.kinfu_.edgeIdxVec_;
+
+      ifstream fin(edgeIdxFn);
+      while(!fin.eof()){
+          int v;
+          fin>>v;
+          edgeIdxVec.push_back(v);
+      }
+
+      //直接在这里提取边框点云
+//       ExtractIndices<PointXYZ> extractInd;
+//       extractInd.setInputCloud(synModelCloudPtr);
+//       extractInd.setIndices(boost::make_shared<vector<int>>(edgeIdxVec));
+//       extractInd.filter(*app.kinfu_.edgeCloud_);
+
+  }//if "-edgeIdx"
+
+  //zhangxaochen:   //2016-5-10 15:13:04
+  if(pc::parse_argument(argc, argv, "-erodeRad", app.dmatErodeRadius_) > 0 && app.dmatErodeRadius_ < 0)
+      app.dmatErodeRadius_ = 0;
 
   // executing
   try { 

@@ -205,6 +205,7 @@ if(build)
 
   # OpenGL and GLUT
   if(OPENGL_FOUND AND GLUT_FOUND)
+    message(STATUS "OPENGL_FOUND=true (include: ${OPENGL_INCLUDE_DIR}, lib: ${OPENGL_LIBRARIES})") #zhangxaochen
     include_directories("${OPENGL_INCLUDE_DIR}")
     include_directories("${GLUT_INCLUDE_DIR}")
     PCL_ADD_EXECUTABLE_OPT_BUNDLE(pcl_grabcut_2d "${SUBSYS_NAME}" src/grabcut_2d.cpp)

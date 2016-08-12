@@ -42,6 +42,10 @@
 //#include <pcl/gpu/utils/safe_call.hpp>
 #include "safe_call.hpp"
 
+//zhangxaochen: 
+//此宏定义处, 按耿老师要求, 将 v/n_g_prev 投影到 cam_coo, 而不是原来的 v/n_curr 投影到 global_coo   //2016-5-24 22:04:31
+//#define GCOO_2_CAMCOO //还是放到项目属性页中吧, 此头文件影响太广, 重新编译太慢
+
 namespace pcl
 {
   namespace device

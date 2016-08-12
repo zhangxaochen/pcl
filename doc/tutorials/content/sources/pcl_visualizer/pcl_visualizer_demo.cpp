@@ -10,6 +10,8 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/console/parse.h>
 
+#include <ctime>
+
 // --------------
 // -----Help-----
 // --------------
@@ -324,6 +326,8 @@ main (int argc, char** argv)
   // ----------------------------------------------------------------
   // -----Calculate surface normals with a search radius of 0.05-----
   // ----------------------------------------------------------------
+  clock_t begt;
+  begt = clock();
   pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal> ne;
   ne.setInputCloud (point_cloud_ptr);
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB> ());
@@ -331,13 +335,16 @@ main (int argc, char** argv)
   pcl::PointCloud<pcl::Normal>::Ptr cloud_normals1 (new pcl::PointCloud<pcl::Normal>);
   ne.setRadiusSearch (0.05);
   ne.compute (*cloud_normals1);
+  cout<<"NormalEstimation, r=0.05, t: "<<clock()-begt<<endl; //138
 
   // ---------------------------------------------------------------
   // -----Calculate surface normals with a search radius of 0.1-----
   // ---------------------------------------------------------------
+  begt = clock();
   pcl::PointCloud<pcl::Normal>::Ptr cloud_normals2 (new pcl::PointCloud<pcl::Normal>);
   ne.setRadiusSearch (0.1);
   ne.compute (*cloud_normals2);
+  cout<<"NormalEstimation, r=0.1, t: "<<clock()-begt<<endl; //163
 
   boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
   if (simple)

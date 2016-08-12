@@ -11,6 +11,7 @@
 // using namespace cv;
 
 #include <contour_cue_impl.h>
+//#include <pcl/gpu/kinfu/tsdf_volume.h> //只要包含就报错！
 
 
 namespace zc{
@@ -95,8 +96,14 @@ void inpaintGpu(const DepthMap& src, DepthMap& dst){
 }//inpaintGpu
 
 #define CONT_V1 0
+
 #if !CONT_V1
-#define CONT_V2 1
+
+#define CONT_V2 0
+#if !CONT_V2
+#define CONT_V3 1
+#endif  //!CONT_V2
+
 #endif  //!CONT_V1
 
 __global__ void
@@ -109,6 +116,9 @@ computeContoursKernel(const PtrStepSz<ushort> src, PtrStepSz<uchar> dst, int thr
 
     dst.ptr(y)[x] = 0;
     ushort depVal = src.ptr(y)[x];
+    if(depVal == 0) //漏了此判定 //2016-3-27 20:13:32
+        return;
+
     int xleft = max(x-1, 0), xright = min(x+1, src.cols-1),
         ytop = max(y-1, 0), ydown = min(y+1, src.rows-1);
 
@@ -128,6 +138,14 @@ computeContoursKernel(const PtrStepSz<ushort> src, PtrStepSz<uchar> dst, int thr
                 return;
             else if(neighbor - depVal > thresh){  // nbr - self, 表示物体轮廓应该更浅
                 isContour = true;
+            }
+#elif CONT_V3 //
+            //if(abs(neighbor - depVal) > thresh){  //上面瞎扯! 原文反而是 src-nbr, 我觉得是谬误, 应有abs. 2016-3-27 20:21:53
+            if(neighbor==0)
+                neighbor=USHRT_MAX;
+            if(neighbor - depVal > thresh){  //仍改回 nbr - self, 表示物体轮廓应该更浅, 对于nbr=0, 临时赋予极大值 USHRT_MAX
+                dst.ptr(y)[x] = UCHAR_MAX;
+                return;
             }
 #endif
         }//for-iy
@@ -204,8 +222,7 @@ void contourCorrespCandidate(const float3 &camPos, const MapArr &vmap, const Map
     //printf("vmap, nmap shape: [%d, %d], [%d, %d]\n", vmap.rows(), vmap.cols(), nmap.rows(), nmap.cols()); //test OK
     cccKernel<<<grid, block>>>(camPos, vmap, nmap, angleThreshCos, outMask);
 
-    sync();
-    //cudaSafeCall(cudaDeviceSynchronize());
+    cudaSafeCall(cudaDeviceSynchronize());
     cudaSafeCall(cudaGetLastError());
 }//contourCorrespCandidate
 
@@ -273,6 +290,61 @@ void transformVmap( const MapArr &vmap_src, const Mat33 &Rmat, const float3 &tve
     cudaSafeCall(cudaGetLastError());
     cudaSafeCall(cudaDeviceSynchronize());
 }//transformVmap
+
+__global__ void
+renderNmap2Kernel(const PtrStepSz<float3> nmap2d, PtrStepSz<uchar3> img){
+    int x = threadIdx.x + blockIdx.x * blockDim.x,
+        y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    const float qnan = pcl::device::numeric_limits<float>::quiet_NaN();
+    if(!(x < nmap2d.cols && y < nmap2d.rows))
+        return;
+
+    uchar3 px = img.ptr(y)[x];
+    px.x = px.y = px.z = 0;
+    img.ptr(y)[x] = px;
+
+    float3 n = nmap2d.ptr(y)[x];
+    if(isnan(n.x) || n.x==0 && n.y==0 && n.z==0)
+        return;
+    //if(x<3 && y<3){
+    //    printf("nmap2d->n: %f, %f, %f\n", n.x, n.y, n.z);
+    //}
+
+     px.x = static_cast<unsigned char>((5.f - n.x * 3.5f) * 25.5f);
+     px.y = static_cast<unsigned char>((5.f - n.y * 2.5f) * 25.5f);
+     px.z = static_cast<unsigned char>((5.f - n.z * 3.5f) * 25.5f);
+     img.ptr(y)[x] = px;
+}//renderNmap2Kernel
+
+Image renderNmap2(const MapArr &nmap, bool debugDraw /*= false*/){
+    //migrated from renderTangentColors @imgproc.cpp @kfusion
+    DeviceArray2D<float3> nmap2d;
+    device::convert(nmap, nmap2d);
+    //test: 检测是否 nmap->nmap2d时候 qnan弄丢了: //发现 nmap 无效法向是 (0,0,0), 不是 qnan!!
+//     vector<float> nmapVec;
+//     int nmapVecElemstep;
+//     nmap.download(nmapVec, nmapVecElemstep);
+//     cout<<"nmapVec: "<<nmapVec[0]<<"; "<<"nmapVecElemstep: "<<nmapVecElemstep<<endl; //0, 640
+
+    int cols = nmap2d.cols(),
+        rows = nmap2d.rows();
+
+    Image img; //device memory    //kernel函数参数PtrStepSz不能是 "&", 否则: Error	44	error : a reference of type "pcl::gpu::PtrStepSz<uchar3> &" (not const-qualified) cannot be initialized with a value of type "zc::Image"
+    //DeviceArray2D<uchar3> img;
+    img.create(rows, cols);
+
+    //核心:
+    dim3 block(32, 8);
+    dim3 grid(divUp(cols, block.x), divUp(rows, block.y));
+
+    renderNmap2Kernel<<<grid, block>>>(nmap2d, img);
+
+    cudaSafeCall(cudaDeviceSynchronize());
+    return img; //一般传参[out], 这里初次尝试返回gpu变量
+}//renderNmap2
+
+void foo_in_cc_cu(){}
 
 }//namespace zc
 

@@ -80,7 +80,7 @@
 #include <pcl/io/vtk_io.h>
 
 #include "openni_capture.h"
-#include "color_handler.h"
+//#include "color_handler.h"
 #include "evaluation.h"
 
 #include <pcl/common/angles.h>
@@ -394,7 +394,9 @@ display_tic_toc (vector<double> &tic_toc,const string &fun_name)
 }
 
 void
-capture (Eigen::Isometry3d pose_in,unsigned short* depth_buffer_mm,const uint8_t* color_buffer)//, string point_cloud_fname)
+//capture (Eigen::Isometry3d pose_in,unsigned short* depth_buffer_mm,const uint8_t* color_buffer)//, string point_cloud_fname)
+//zhangxaochen: 2016-6-11 23:50:35
+capture (const Eigen::Isometry3d pose_in,unsigned short* depth_buffer_mm,const uint8_t* color_buffer)//, string point_cloud_fname)
 {
   // No reference image - but this is kept for compatability with range_test_v2:
   float* reference = new float[range_likelihood_->getRowHeight() * range_likelihood_->getColWidth()];

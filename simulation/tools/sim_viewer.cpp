@@ -390,7 +390,9 @@ boost::shared_ptr<pcl::visualization::PCLVisualizer> simpleVis (pcl::PointCloud<
 }
 */
 
-void capture (Eigen::Isometry3d pose_in, string point_cloud_fname)
+//void capture (Eigen::Isometry3d pose_in, string point_cloud_fname)
+//zhangxaochen: 形参不允许 eigen的 align, 否则报错 C2719; 尝试改为 const& //见: http://www.evernote.com/l/AY8XV7EUC_tCEL76t8IA7_4iI4pmweDCqQk/
+void capture (const Eigen::Isometry3d &pose_in, string point_cloud_fname)
 {
   // No reference image - but this is kept for compatability with range_test_v2:
   float* reference = new float[range_likelihood_->getRowHeight() * range_likelihood_->getColWidth()];
@@ -503,7 +505,9 @@ void capture (Eigen::Isometry3d pose_in, string point_cloud_fname)
 
 
 
-void print_Quaterniond(Eigen::Quaterniond r, std::stringstream &ss){
+//void print_Quaterniond(Eigen::Quaterniond r, std::stringstream &ss){
+//zhangxaochen: 改为 const&
+void print_Quaterniond(const Eigen::Quaterniond &r, std::stringstream &ss){
   ss <<r.w()<<", "<<r.x()<<", "<<r.y()<<", "<<r.z() ;
   //  std::cout << r.str() << "q\n";
 }
@@ -527,7 +531,9 @@ void wRo_to_euler(const Eigen::Matrix3f& wRo, double& yaw, double& pitch, double
   roll  = standardRad(atan2(wRo(0,2)*s - wRo(1,2)*c, -wRo(0,1)*s + wRo(1,1)*c));
 }
 
-void print_Isometry3d(Eigen::Isometry3d pose, std::stringstream &ss){
+//void print_Isometry3d(Eigen::Isometry3d pose, std::stringstream &ss){
+//zhangxaochen: 改为 const&
+void print_Isometry3d(const Eigen::Isometry3d &pose, std::stringstream &ss){
   Eigen::Vector3d t(pose.translation());
   Eigen::Quaterniond r(pose.rotation());
   ss <<t[0]<<", "<<t[1]<<", "<<t[2]<<" | " 
@@ -666,8 +672,8 @@ loadPolygonMeshModel (char* polygon_file)
   
   // Not sure if PolygonMesh assumes triangles if to
   // TODO: Ask a developer
-  //PolygonMeshModel::Ptr model = PolygonMeshModel::Ptr (new PolygonMeshModel (GL_POLYGON, cloud));
-  TriangleMeshModel::Ptr model = TriangleMeshModel::Ptr (new TriangleMeshModel (cloud));
+  PolygonMeshModel::Ptr model = PolygonMeshModel::Ptr (new PolygonMeshModel (GL_POLYGON, cloud));
+  //TriangleMeshModel::Ptr model = TriangleMeshModel::Ptr (new TriangleMeshModel (cloud));
   scene_->add (model);
   
   std::cout << "Just read " << polygon_file << std::endl;
@@ -683,8 +689,11 @@ initialize (int, char** argv)
 
   // works for small files:
   camera_->set(-5.0, 0.0, 1.0, 0.0, 0.0, 0.0);
-  pcl::console::print_info("About to read: %s", argv[2]);
-  loadPolygonMeshModel (argv[2]);
+  //pcl::console::print_info("About to read: %s", argv[2]);
+  //loadPolygonMeshModel (argv[2]);
+  //zhangxaochen:
+  pcl::console::print_info("About to read: %s\n", argv[1]);
+  loadPolygonMeshModel (argv[1]);
 }
 
 int
@@ -1074,7 +1083,7 @@ main (int argc, char** argv)
   range_likelihood_->setComputeOnCPU (false);
   range_likelihood_->setSumOnCPU (true);
   range_likelihood_->setUseColor (true);
-  initialize (argc, argv); 
+  //initialize (argc, argv); 
 
   if (p)
     p->setBackgroundColor (bcolor[0], bcolor[1], bcolor[2]);

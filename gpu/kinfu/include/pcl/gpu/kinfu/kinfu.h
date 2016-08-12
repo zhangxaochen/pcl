@@ -207,6 +207,9 @@ namespace pcl
         void disableIcp();
 
         //zhangxaochen:
+        bool imud_;// = false; //2016-7-12 16:15:39
+        bool illCondMat_;
+
         bool icp_orig_;// = true;          //default， kinfu 原来的实现
         bool icp_sgf_cpu_;// = false;      //孙国飞 cpu 上 kdTreeFlann 查找 contour-cue 对应点实现
         
@@ -218,7 +221,23 @@ namespace pcl
         //1: volume->[raycast]->genDepth->[zc::inpaint]->inpaintDmat->[createVmap]->vmap_cam_coo->[transformVmap]->vmap_g->[computeNormalsEigen]->nmap_g
         //2: contour-cue impl.
         int cc_norm_prev_way_; //= 0;
-                                           //jjj
+
+        RayCaster::Ptr pRaycaster_;
+
+        //---------------虚拟立方体 2016-4-7 22:02:25
+        PointCloud<PointXYZ>::Ptr synModelCloudPtr_;
+        //棱边下标： //2016-4-10 17:55:56
+        vector<int> edgeIdxVec_;
+        //按下标加载的棱边点集, 以及其消隐后的子集
+        PointCloud<PointXYZ>::Ptr edgeCloud_, edgeCloudVisible_;
+
+        //+++++++++++++++配准目标物指定, 预计可以是:
+        //0. kinfu.orig 原流程, 原TSDF投射为vmap, nmap;
+        //1. 虚拟立方体cube的伴随【影子】TSDF投射得到的深度图; 优: kinfu::raycast 直接得到 vmap, nmap; 劣: 相当于压缩, edge会损失
+        //2. 我自己实现的cube-cloud 直接投射 cloud2depth, 与TSDF【无关】; 优: 可保留edge; 劣: 相当于自己实现的消隐、压缩算法, 精度未对比测量;
+        //3. cube预置到老TSDF, 与depth共同形成模型, 再投射为深度图; 优: 虚实公摊权重, 似乎更合理; 劣: 并不单独考虑cube-edge
+        int regObjId_;
+        TsdfVolume::Ptr tsdf_volume_shadow_; //当 regObjId_==1时, 才初始化
 
         zc::MaskMap getContMask(){
             return contMsk_;
@@ -346,8 +365,14 @@ namespace pcl
         //zhangxaochen:
         zc::MaskMap contMsk_;
         zc::MaskMap contCorrespMsk_; //contour correspondence candidates
-        MapArr nmap_g_prev_choose_;
-        RayCaster::Ptr pRaycaster_;
+        MapArr nmap_g_prev_choose_; //现在觉得乱, 不如用 nmaps_g_prev_[0], 但是懒得改了 //2016-5-12 16:58:19
+        
+        //vmaps_g_prev_, nmaps_g_prev_ 改作随 regObjId_ 变化, 故用新变量作为投射TSDF做 V(i-1) N(i-1): //2016-4-21 16:24:42
+        MapArr vmap_g_model_, nmap_g_model_;
+        DepthMap dmatInp_;
+
+        DepthMap depth_raw_prev_; //前一帧原始深度图    //2016-6-21 21:50:32
+
 public:
 EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

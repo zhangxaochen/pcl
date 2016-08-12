@@ -50,6 +50,7 @@ for n=1:size(poses,1)
   q=poses(n,4:7);
   r=q2rot(q);
   coord(h,r,t);
+  title(num2str(n));
   pause;
 end
 octave_axis_equal(h);

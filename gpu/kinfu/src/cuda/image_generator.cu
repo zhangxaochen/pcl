@@ -158,6 +158,9 @@ namespace pcl
 void
 pcl::device::generateDepth (const Mat33& R_inv, const float3& t, const MapArr& vmap, DepthMap& dst)
 {
+  //zhangxaochen: “‘∑¿ dst Œ¥∑÷≈‰, ªÚ≥ﬂ¥Á¥ÌŒÛ. //2016-4-21 14:40:22
+  dst.create(vmap.rows() / 3, vmap.cols());
+
   dim3 block(32, 8);
   dim3 grid(divUp(dst.cols(), block.x), divUp(dst.rows(), block.y));
   

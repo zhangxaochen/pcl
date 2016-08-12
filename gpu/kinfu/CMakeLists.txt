@@ -1,8 +1,8 @@
 set(SUBSYS_NAME gpu_kinfu)
 set(SUBSYS_PATH gpu/kinfu)
 set(SUBSYS_DESC "Kinect Fusion implementation")
-# zhangxaochen: add kdtree
-set(SUBSYS_DEPS common io gpu_containers geometry search visualization kdtree)
+# zhangxaochen: add kdtree; filters(2016-4-10 18:08:30)
+set(SUBSYS_DEPS common io gpu_containers geometry search visualization kdtree filters)
 
 set(build FALSE)
 
@@ -73,7 +73,8 @@ if (build)
 
     PCL_ADD_LIBRARY("${LIB_NAME}" "${SUBSYS_NAME}" ${srcs} ${incs} ${cuda} ${cuda_objs})
     target_link_libraries("${LIB_NAME}" pcl_gpu_containers)
-    target_link_libraries("${LIB_NAME}" pcl_kdtree ${OpenCV_LIBS})
+    #zhangxaochen: //Ôö¼Ó pcl_filters //2016-4-10 19:21:29
+    target_link_libraries("${LIB_NAME}" pcl_kdtree pcl_filters ${OpenCV_LIBS})
 
 
     set(EXT_DEPS "")

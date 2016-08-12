@@ -51,6 +51,9 @@
 #include <pcl/common/time.h>
 #include <pcl/console/parse.h>
 
+#include <ctime>
+using namespace std;
+
 int
 main (int argc, char** av)
 {
@@ -74,13 +77,16 @@ main (int argc, char** av)
 
   pcl::console::print_highlight ("Loaded cloud %s of size %lu\n", av[1], cloud_ptr->points.size ());
 
+  clock_t begt = clock();
   // Remove the nans
   cloud_ptr->is_dense = false;
   cloud_no_nans->is_dense = false;
   std::vector<int> indices;
   pcl::removeNaNFromPointCloud (*cloud_ptr, *cloud_no_nans, indices);
   pcl::console::print_highlight ("Removed nans from %lu to %lu\n", cloud_ptr->points.size (), cloud_no_nans->points.size ());
+  cout<<"time: "<<clock()-begt<<endl; //15ms
 
+  begt = clock();
   // Estimate the normals
   pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
   ne.setInputCloud (cloud_no_nans);
@@ -89,12 +95,15 @@ main (int argc, char** av)
   ne.setRadiusSearch (0.03);
   ne.compute (*cloud_normals);
   pcl::console::print_highlight ("Normals are computed and size is %lu\n", cloud_normals->points.size ());
+  cout<<"time: "<<clock()-begt<<endl; //19404ms
 
+  begt = clock();
   // Region growing
   pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> rg;
   rg.setSmoothModeFlag (false); // Depends on the cloud being processed
   rg.setInputCloud (cloud_no_nans);
   rg.setInputNormals (cloud_normals);
+  cout<<"time: "<<clock()-begt<<endl; //0ms
 
   std::vector <pcl::PointIndices> clusters;
   pcl::StopWatch watch;
